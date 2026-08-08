@@ -380,7 +380,7 @@ textarea.inp{min-height:78px;resize:vertical}
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b3';
+const BUILD = 'LW b4';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -552,32 +552,66 @@ function resolveMK(){
   if(g.MiniKit && typeof g.MiniKit.install === 'function') return g.MiniKit;
   return null;
 }
-var MK_CDNS = [
+var MK_LOG = [];
+var MK_UMD = [
   'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
+  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js/dist/index.umd.js',
   'https://unpkg.com/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
-  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js/dist/index.umd.js'
+  'https://unpkg.com/@worldcoin/minikit-js/dist/index.umd.js',
+  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@1.6.0/dist/index.umd.js'
 ];
+var MK_ESM = [
+  'https://esm.sh/@worldcoin/minikit-js@1.9.6',
+  'https://esm.sh/@worldcoin/minikit-js'
+];
+function waitMK(){
+  return new Promise(function(res){
+    var n=0;
+    var iv=setInterval(function(){
+      var m=resolveMK();
+      if(m || ++n>20){ clearInterval(iv); res(m); }
+    }, 100);
+  });
+}
+function tryList(list, loader){
+  var i=0;
+  function next(){
+    if(i>=list.length) return Promise.resolve(null);
+    var u=list[i++], tag=u.replace('https://','').split('/')[0]+(u.indexOf('@1.6')>0?'@1.6':'');
+    return loader(u).then(function(m){
+      if(m){ MK_LOG.push('✅ '+tag); return m; }
+      MK_LOG.push('⚠️ '+tag+' cargó sin objeto'); return next();
+    }).catch(function(){ MK_LOG.push('❌ '+tag); return next(); });
+  }
+  return next();
+}
+var mkPromise = null;
 function initMiniKit(){
-  var chain = Promise.reject(new Error('start'));
-  MK_CDNS.forEach(function(u){ chain = chain.catch(function(){ return loadScript(u); }); });
-  return chain.then(function(){
-    /* espera activa: el objeto tarda en aparecer aunque el script ya cargó */
-    return new Promise(function(res){
-      var n=0;
-      var iv=setInterval(function(){
-        var m=resolveMK();
-        if(m || ++n>30){ clearInterval(iv); res(m); }
-      }, 100);
+  if(mkPromise) return mkPromise;
+  mkPromise = Promise.resolve().then(function(){
+    if(resolveMK()) return resolveMK();
+    return tryList(MK_UMD, function(u){ return loadScript(u).then(waitMK); }).then(function(m){
+      if(m) return m;
+      /* último recurso: módulo ESM, que no depende de que exista un build UMD */
+      return tryList(MK_ESM, function(u){
+        return import(u).then(function(mod){
+          var M = mod.MiniKit || (mod.default && mod.default.MiniKit) || mod.default;
+          if(M && typeof M.install === 'function'){ window._MiniKit = M; return M; }
+          return null;
+        });
+      });
     });
   }).then(function(m){
-    if(!m) return null;
+    if(!m){ MK_LOG.push('WorldApp en la página: '+(window.WorldApp ? 'sí' : 'no')); return null; }
     try{
       if(LOOT_APP_ID && LOOT_APP_ID.indexOf('app_')===0 && LOOT_APP_ID.indexOf('PEGA')<0) m.install(LOOT_APP_ID);
       else m.install();
-    }catch(e){}
+    }catch(e){ MK_LOG.push('install() lanzó: '+(e.message||e)); }
     MK = m; window._MiniKit = m;
+    MK_LOG.push('isInstalled: '+(mkInstalled()?'sí':'no'));
     return m;
-  }).catch(function(){ return null; });
+  }).catch(function(e){ MK_LOG.push('init: '+(e.message||e)); return null; });
+  return mkPromise;
 }
 function mkInstalled(){
   if(!MK) return false;
@@ -657,11 +691,12 @@ function connect(){
   b.disabled=true; b.innerHTML='<span class="spin"></span> …';
   $('splash-msg').textContent='';
   initMiniKit().then(function(m){
-    if(!m || !mkInstalled()){
-      throw new Error(LANG==='es'
-        ? 'Abre LOOT WALLET dentro de World App. Fuera de World App no hay wallet que conectar.'
-        : 'Open LOOT WALLET inside World App. Outside World App there is no wallet to connect.');
+    if(!m){
+      throw new Error((LANG==='es'
+        ? 'No se pudo cargar MiniKit desde ningún CDN. Intentos: '
+        : 'MiniKit could not be loaded from any CDN. Attempts: ') + MK_LOG.join(' · '));
     }
+    /* no se bloquea por isInstalled(): en algunas versiones da false y walletAuth funciona igual */
     var nonce = (Date.now().toString(36) + Math.random().toString(36).slice(2)).padEnd(16,'0').slice(0,24);
     return mkCall('walletAuth', {nonce: nonce, statement: 'LOOT WALLET · Your Web3 loot starts here.'});
   }).then(function(res){
@@ -680,7 +715,8 @@ function connect(){
     refreshAll(false);
   }).catch(function(e){
     b.disabled=false; b.textContent=t('connect');
-    $('splash-msg').innerHTML = '<div class="err">'+esc(e.message||String(e))+'</div>';
+    $('splash-msg').innerHTML = '<div class="err">'+esc(e.message||String(e))+'</div>'
+      + (MK_LOG.length ? '<div class="mini" style="margin-top:8px">MiniKit: '+esc(MK_LOG.join(' · '))+'</div>' : '');
   });
 }
 function getUsername(a){
@@ -1157,7 +1193,8 @@ function runDiag(){
       .catch(function(e){ lines.push('❌ '+u.replace('https://','').split('/')[0]+' · '+(e.message||'falla')); });
   });
   Promise.all(jobs).then(function(){
-    lines.push((MK && mkInstalled()) ? '✅ MiniKit activo' : '❌ MiniKit no detectado');
+    lines.push((MK ? '✅ MiniKit cargado' : '❌ MiniKit no cargado') + (mkInstalled()?' · isInstalled sí':' · isInstalled no'));
+    MK_LOG.forEach(function(l){ lines.push('   '+l); });
     lines.push('👛 '+(S.addr||'—'));
     showBox('diag-out','ok', lines.map(esc).join('<br>'));
   });

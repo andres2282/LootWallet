@@ -383,9 +383,9 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
     <div id="tk-ico"></div>
   </div>
   <div class="pills" style="margin-top:14px">
+    <button class="pill" id="rg-1h" onclick="setRange('1h')">1H</button>
+    <button class="pill" id="rg-6h" onclick="setRange('6h')">6H</button>
     <button class="pill on" id="rg-24h" onclick="setRange('24h')">24H</button>
-    <button class="pill" id="rg-7d" onclick="setRange('7d')">7D</button>
-    <button class="pill" id="rg-30d" onclick="setRange('30d')">30D</button>
   </div>
   <canvas id="tk-chart"></canvas>
   <div class="mini" id="tk-chartmsg" style="margin-top:8px"></div>
@@ -408,7 +408,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b9';
+const BUILD = 'LW b10';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -517,11 +517,17 @@ function esc(s){ return String(s===undefined||s===null?'':s).replace(/[&<>"']/g,
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function short(a){ return a ? a.slice(0,6)+'…'+a.slice(-4) : '—'; }
 function fmtUsd(n){
+  n = Number(n);
   if(!isFinite(n)) return '—';
-  if(n>=1000) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0});
-  if(n>=1) return '$'+n.toFixed(2);
-  if(n>0) return '$'+n.toFixed(4);
-  return '$0.00';
+  if(n === 0) return '$0.00';
+  var a = Math.abs(n);
+  if(a >= 1000) return '$' + n.toLocaleString('en-US', {maximumFractionDigits: 0});
+  if(a >= 1) return '$' + n.toFixed(2);
+  if(a >= 0.01) return '$' + n.toFixed(4);
+  /* muy pequeños: 4 cifras significativas en vez de $0.0000 */
+  var e = Math.floor(Math.log10(a));
+  var d = Math.min(18, -e + 3);
+  return '$' + n.toFixed(d).replace(/0+$/, '').replace(/\.$/, '');
 }
 function fmtAmt(n){
   if(!isFinite(n)) return '—';
@@ -1012,14 +1018,14 @@ function jget(url, ms){
     throw new Error(host + ' → ' + ((e && e.name === 'AbortError') ? 'sin respuesta en 12 s' : (e.message || 'falla')));
   });
 }
-var TOK = {addr:'', mkt:'', sym:'', name:'', bal:0, px:0, pair:'', range:'24h', pts:[]};
+var TOK = {addr:'', mkt:'', sym:'', name:'', bal:0, px:0, pair:'', range:'24h', src:'', links:[]};
 function openToken(addr){
   var weth = tokBySym('WETH');
   var r = S.tokens.filter(function(x){ return x.addr === addr; })[0]
        || (addr === 'native' ? {sym:'ETH', name:'Ether', addr:'native', dec:18, bal:S.eth} : null);
   if(!r) return;
   TOK = {addr: addr, mkt: (addr === 'native' && weth) ? weth.addr : addr, sym: r.sym, name: r.name,
-         bal: r.bal, px: S.prices[addr] || r.px || 0, pair:'', range: TOK.range || '24h', pts: []};
+         bal: r.bal, px: S.prices[addr] || r.px || 0, pair:'', range: TOK.range || '24h', src:''};
   $('tk-title').textContent = r.sym;
   $('tk-ico').innerHTML = tokenIcon({addr: TOK.mkt, sym: r.sym});
   $('tk-price').textContent = TOK.px ? fmtUsd(TOK.px) : '—';
@@ -1176,46 +1182,127 @@ function openSocial(i){
 }
 function setRange(r){
   TOK.range = r;
-  ['24h','7d','30d'].forEach(function(k){ $('rg-' + k).className = 'pill' + (k === r ? ' on' : ''); });
+  ['1h','6h','24h'].forEach(function(k){ $('rg-' + k).className = 'pill' + (k === r ? ' on' : ''); });
   loadChart();
 }
 function clearChart(){
-  var c = $('tk-chart');
-  if(!c) return;
+  var c = $('tk-chart'); if(!c) return;
   var ctx = c.getContext('2d');
   var dpr = window.devicePixelRatio || 1;
   c.width = Math.max(1, c.clientWidth * dpr);
   c.height = Math.max(1, c.clientHeight * dpr);
   ctx.clearRect(0, 0, c.width, c.height);
 }
+const RANGES = {
+  '1h':  {sec: 3600,   n: 12, gt: {t:'minute', a:5,  l:12}},
+  '6h':  {sec: 21600,  n: 24, gt: {t:'minute', a:15, l:24}},
+  '24h': {sec: 86400,  n: 24, gt: {t:'hour',   a:1,  l:24}}
+};
 function loadChart(){
   clearChart();
-  if(!TOK.pair){ $('tk-chartmsg').textContent = LANG === 'es' ? 'Sin pool, no hay gráfico.' : 'No pool, no chart.'; return; }
-  $('tk-chartmsg').textContent = LANG === 'es' ? 'Cargando gráfico…' : 'Loading chart…';
-  var tf = TOK.range === '24h' ? {t:'hour', a:1, l:24}
-         : TOK.range === '7d'  ? {t:'hour', a:4, l:42}
-         : {t:'day', a:1, l:30};
-  var url = GT + '/networks/world-chain/pools/' + TOK.pair + '/ohlcv/' + tf.t
-          + '?aggregate=' + tf.a + '&limit=' + tf.l + '&currency=usd&token=' + TOK.mkt;
+  var L = LANG === 'es';
+  if(!TOK.pair){ $('tk-chartmsg').textContent = L ? 'Sin pool, no hay gráfico.' : 'No pool, no chart.'; return; }
+  $('tk-chartmsg').innerHTML = '<span class="spin"></span> ' + (L ? 'Cargando gráfico…' : 'Loading chart…');
+  var R = RANGES[TOK.range] || RANGES['24h'];
   var want = TOK.range + '|' + TOK.pair;
-  jget(url).then(function(j){
-    if(want !== TOK.range + '|' + TOK.pair) return;   /* llegó tarde, ya cambió el rango */
+  var url = GT + '/networks/world-chain/pools/' + TOK.pair + '/ohlcv/' + R.gt.t
+          + '?aggregate=' + R.gt.a + '&limit=' + R.gt.l + '&currency=usd&token=' + TOK.mkt;
+
+  jget(url, 8000).then(function(j){
     var list = (j && j.data && j.data.attributes && j.data.attributes.ohlcv_list) || [];
-    var pts = list.map(function(x){ return {t: Number(x[0]), c: parseFloat(x[4])}; })
-                  .filter(function(x){ return isFinite(x.c) && isFinite(x.t); })
-                  .sort(function(a, b){ return a.t - b.t; });
-    if(pts.length < 2){ $('tk-chartmsg').textContent = LANG === 'es' ? 'Todavía no hay suficientes operaciones.' : 'Not enough trades yet.'; return; }
-    TOK.pts = pts;
-    drawChart(pts);
-    var first = pts[0].c, last = pts[pts.length - 1].c;
-    var pct = ((last - first) / first) * 100;
+    var cs = list.map(function(x){
+      return {t: Number(x[0]), o: parseFloat(x[1]), h: parseFloat(x[2]), l: parseFloat(x[3]), c: parseFloat(x[4])};
+    }).filter(function(x){ return isFinite(x.c) && isFinite(x.o); }).sort(function(a, b){ return a.t - b.t; });
+    if(cs.length < 2) throw new Error('pocos datos');
+    return cs;
+  }).catch(function(){
+    /* GeckoTerminal no responde dentro de World App: se arman las velas leyendo el pool */
+    return chainCandles(R);
+  }).then(function(cs){
+    if(want !== TOK.range + '|' + TOK.pair) return;
+    if(!cs || cs.length < 2){ $('tk-chartmsg').textContent = L ? 'Todavía no hay suficientes operaciones en este rango.' : 'Not enough trades in this range yet.'; return; }
+    drawCandles(cs);
+    var pct = ((cs[cs.length-1].c - cs[0].o) / cs[0].o) * 100;
     $('tk-chartmsg').innerHTML = '<span style="color:' + (pct >= 0 ? 'var(--grn)' : 'var(--red)') + '">'
-      + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%</span> · ' + TOK.range.toUpperCase();
-  }).catch(function(e){
-    $('tk-chartmsg').textContent = (LANG === 'es' ? 'No se pudo cargar el gráfico · ' : 'Could not load the chart · ') + (e.message || '');
+      + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%</span> · ' + TOK.range.toUpperCase()
+      + (TOK.src ? ' · ' + TOK.src : '');
+  }).catch(function(err){
+    if(want !== TOK.range + '|' + TOK.pair) return;
+    $('tk-chartmsg').textContent = (L ? 'No se pudo cargar el gráfico · ' : 'Could not load the chart · ') + (err.message || '');
   });
 }
-function drawChart(pts){
+/* velas armadas con los eventos Swap del pool, vía RPC */
+const RPC_LOGS = 'https://worldchain.drpc.org';
+const SWAP_TOPIC_ARGS = 'Swap(address,address,int256,int256,uint160,uint128,int24)';
+function chainCandles(R){
+  var pool = TOK.pair, mine = TOK.mkt, pxNow = TOK.px;
+  if(!pool) return Promise.reject(new Error('sin pool'));
+  var BLOCK_SEC = 2;
+  var span = Math.ceil(R.sec / BLOCK_SEC);
+  return Promise.all([
+    rpc('eth_blockNumber'),
+    ethCall(pool, sel('token0()'))
+  ]).then(function(o){
+    var latest = parseInt(o[0], 16);
+    var token0 = ('0x' + String(o[1]).slice(-40)).toLowerCase();
+    var invert = token0 !== String(mine).toLowerCase();
+    var from = Math.max(0, latest - span);
+    var topic = ethers.id(SWAP_TOPIC_ARGS);
+    var ranges = [];
+    for(var b = from; b <= latest; b += 1000) ranges.push([b, Math.min(latest, b + 999)]);
+    var logs = [];
+    function run(i){
+      if(i >= ranges.length) return Promise.resolve();
+      return Promise.all(ranges.slice(i, i + 6).map(function(rg){
+        return rpcOne(RPC_LOGS, 'eth_getLogs', [{address: pool, topics: [topic],
+          fromBlock: '0x' + rg[0].toString(16), toBlock: '0x' + rg[1].toString(16)}])
+          .then(function(l){ if(Array.isArray(l)) logs = logs.concat(l); })
+          .catch(function(){});   /* con datos parciales se pinta lo que haya */
+      })).then(function(){ return run(i + 6); });
+    }
+    return run(0).then(function(){
+      if(!logs.length) throw new Error(LANG === 'es' ? 'sin operaciones en el rango' : 'no trades in range');
+      var now = Math.floor(Date.now() / 1000);
+      var pts = [];
+      logs.forEach(function(lg){
+        try{
+          var d = String(lg.data).slice(2);
+          var sq = BigInt('0x' + d.slice(128, 192));           /* sqrtPriceX96 */
+          var s = Number(sq) / Math.pow(2, 96);
+          var raw = s * s;
+          if(!isFinite(raw) || raw <= 0) return;
+          if(invert) raw = 1 / raw;
+          var bn = parseInt(lg.blockNumber, 16);
+          pts.push({t: now - (latest - bn) * BLOCK_SEC, p: raw});
+        }catch(e){}
+      });
+      if(pts.length < 2) throw new Error(LANG === 'es' ? 'sin operaciones en el rango' : 'no trades in range');
+      pts.sort(function(a, b){ return a.t - b.t; });
+      /* el precio del pool está en el otro token: se calibra contra el precio real de ahora */
+      var k = (pxNow && pts[pts.length - 1].p) ? (pxNow / pts[pts.length - 1].p) : 1;
+      pts.forEach(function(x){ x.p = x.p * k; });
+
+      var t1 = now, t0 = now - R.sec, w = R.sec / R.n;
+      var buckets = [];
+      for(var i = 0; i < R.n; i++) buckets.push(null);
+      pts.forEach(function(x){
+        if(x.t < t0) return;
+        var i = Math.min(R.n - 1, Math.floor((x.t - t0) / w));
+        var b = buckets[i];
+        if(!b) buckets[i] = {t: t0 + i * w, o: x.p, h: x.p, l: x.p, c: x.p};
+        else { b.h = Math.max(b.h, x.p); b.l = Math.min(b.l, x.p); b.c = x.p; }
+      });
+      var prev = null, out = [];
+      buckets.forEach(function(b, i){
+        if(b){ prev = b; out.push(b); }
+        else if(prev) out.push({t: t0 + i * w, o: prev.c, h: prev.c, l: prev.c, c: prev.c});
+      });
+      TOK.src = LANG === 'es' ? 'datos on-chain' : 'on-chain data';
+      return out;
+    });
+  });
+}
+function drawCandles(cs){
   var c = $('tk-chart'); if(!c) return;
   var dpr = window.devicePixelRatio || 1;
   var W = c.clientWidth, H = c.clientHeight;
@@ -1224,41 +1311,33 @@ function drawChart(pts){
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
-  var pad = {l: 8, r: 56, t: 12, b: 8};
-  var lo = Math.min.apply(null, pts.map(function(p){ return p.c; }));
-  var hi = Math.max.apply(null, pts.map(function(p){ return p.c; }));
-  if(hi === lo){ hi = lo * 1.001 + 1e-12; }
-  var t0 = pts[0].t, t1 = pts[pts.length - 1].t;
-  var up = pts[pts.length - 1].c >= pts[0].c;
-  var col = up ? '#2FD98A' : '#FF5C7A';
-  function X(p){ return pad.l + (p.t - t0) / Math.max(1, t1 - t0) * (W - pad.l - pad.r); }
-  function Y(p){ return pad.t + (1 - (p.c - lo) / (hi - lo)) * (H - pad.t - pad.b); }
+  var pad = {l: 8, r: 58, t: 12, b: 10};
+  var lo = Infinity, hi = -Infinity;
+  cs.forEach(function(k){ lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); });
+  if(!isFinite(lo) || !isFinite(hi)) return;
+  if(hi === lo){ hi = lo * 1.0005 + 1e-18; lo = lo * 0.9995; }
+  var CW = (W - pad.l - pad.r) / cs.length;
+  var bw = Math.max(2, Math.min(14, CW * 0.62));
+  function Y(v){ return pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b); }
 
   ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+  ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'left';
   for(var i = 0; i <= 3; i++){
     var y = pad.t + (H - pad.t - pad.b) * i / 3;
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-    var v = hi - (hi - lo) * i / 3;
-    ctx.fillStyle = 'rgba(156,140,192,.9)'; ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(fmtUsd(v), W - pad.r + 6, y + 3);
+    ctx.fillStyle = 'rgba(156,140,192,.9)';
+    ctx.fillText(fmtUsd(hi - (hi - lo) * i / 3), W - pad.r + 6, y + 3);
   }
-  var g = ctx.createLinearGradient(0, pad.t, 0, H);
-  g.addColorStop(0, up ? 'rgba(47,217,138,.28)' : 'rgba(255,92,122,.28)');
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.beginPath(); ctx.moveTo(X(pts[0]), H - pad.b);
-  pts.forEach(function(p){ ctx.lineTo(X(p), Y(p)); });
-  ctx.lineTo(X(pts[pts.length - 1]), H - pad.b); ctx.closePath();
-  ctx.fillStyle = g; ctx.fill();
-
-  ctx.beginPath();
-  pts.forEach(function(p, i){ i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); });
-  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
-
-  var last = pts[pts.length - 1];
-  ctx.beginPath(); ctx.arc(X(last), Y(last), 8, 0, Math.PI * 2);
-  ctx.fillStyle = up ? 'rgba(47,217,138,.2)' : 'rgba(255,92,122,.2)'; ctx.fill();
-  ctx.beginPath(); ctx.arc(X(last), Y(last), 3.5, 0, Math.PI * 2);
-  ctx.fillStyle = col; ctx.fill();
+  cs.forEach(function(k, i){
+    var x = pad.l + CW * i + CW / 2;
+    var up = k.c >= k.o;
+    var col = up ? '#2FD98A' : '#FF5C7A';
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, Y(k.h)); ctx.lineTo(x, Y(k.l)); ctx.stroke();
+    var yo = Y(k.o), yc = Y(k.c);
+    var top = Math.min(yo, yc), hgt = Math.max(1.5, Math.abs(yc - yo));
+    ctx.fillRect(x - bw / 2, top, bw, hgt);
+  });
 }
 function swapFromToken(){
   var sym = TOK.sym;

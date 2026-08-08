@@ -197,7 +197,7 @@ textarea.inp{min-height:78px;resize:vertical}
 <!-- WALLET -->
 <main id="v-wallet">
   <div class="balcard">
-    <div class="streaks"><i></i><i></i><i></i><i></i></div>
+    
     <div class="lbl" data-i18n="totalBal">Saldo total</div>
     <div class="balnum" id="total-usd">$0.00</div>
     <div class="balsub" id="total-sub" data-i18n="loading">Cargando…</div>
@@ -235,7 +235,7 @@ textarea.inp{min-height:78px;resize:vertical}
   <div id="list-disc"></div>
 
   <div class="card" style="background:linear-gradient(150deg,#2B1355,#150A28 60%);position:relative;overflow:hidden">
-    <div class="streaks"><i></i><i></i><i></i><i></i></div>
+    
     <div class="tag">LOOT ADS 📢</div>
     <h3 style="margin-top:10px">Where Web3 projects meet active users.</h3>
     <p data-i18n="adsPitch">Pon tu proyecto arriba de esta lista y llega a gente que ya usa World Chain todos los días.</p>
@@ -380,7 +380,7 @@ textarea.inp{min-height:78px;resize:vertical}
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b4';
+const BUILD = 'LW b5';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -644,7 +644,7 @@ function txError(p){
 /* ═══════════ estado ═══════════ */
 var S = {
   addr:'', user:'', tokens:[], eth:0, prices:{}, totalUsd:0,
-  pick:'', send:{tok:null}, swap:{in:'WLD', out:'USDC', fee:null, quote:0, slip:5},
+  discErr:'', pick:'', send:{tok:null}, swap:{in:'WLD', out:'USDC', fee:null, quote:0, slip:5},
   pts: parseInt(localStorage.getItem('loot.pts')||'0', 10),
   done: JSON.parse(localStorage.getItem('loot.missions')||'{}'),
   earnTab:'air', adsPlan:0, view:'wallet', busy:false
@@ -731,82 +731,136 @@ function getUsername(a){
 }
 
 /* ═══════════ saldos y precios ═══════════ */
+/* wallet universal: el explorador lista TODOS los ERC-20 que tiene la dirección */
+const EXPLORER = 'https://worldchain-mainnet.explorer.alchemy.com';
+function discoverTokens(){
+  return fetch(EXPLORER + '/api/v2/addresses/' + S.addr + '/token-balances')
+   .then(function(r){ if(!r.ok) throw new Error('explorador ' + r.status); return r.json(); })
+   .then(function(list){
+      if(!Array.isArray(list)) throw new Error('respuesta inesperada del explorador');
+      var out = [];
+      list.forEach(function(x){
+        var tk = x.token || {};
+        var type = String(tk.type || '').toUpperCase().replace('-','');
+        if(type.indexOf('ERC20') < 0) return;
+        var a = String(tk.address || tk.address_hash || '').toLowerCase();
+        if(!/^0x[0-9a-f]{40}$/.test(a)) return;
+        var d = parseInt(tk.decimals || '18', 10); if(!isFinite(d)) d = 18;
+        var bal = 0;
+        try{ bal = fromUnits(BigInt(x.value || '0'), d); }catch(e){ bal = 0; }
+        if(bal <= 0) return;
+        out.push({sym: String(tk.symbol || '?').slice(0,14), name: String(tk.name || 'Token').slice(0,40),
+                  addr: a, dec: d, bal: bal, px: parseFloat(tk.exchange_rate) || 0});
+      });
+      return out;
+   });
+}
 function loadBalances(){
-  var list = allTokens();
-  var jobs = list.map(function(tk){
+  var base = allTokens();
+  var baseJobs = base.map(function(tk){
     var data = sel('balanceOf(address)') + enc(['address'],[S.addr]);
     return ethCall(tk.addr, data).then(function(r){
-      return Object.assign({}, tk, {bal: fromUnits(BigInt(r), tk.dec)});
-    }).catch(function(){ return Object.assign({}, tk, {bal: 0, failed:true}); });
+      return Object.assign({}, tk, {bal: fromUnits(BigInt(r), tk.dec), base: true});
+    }).catch(function(){ return Object.assign({}, tk, {bal: 0, base: true, failed: true}); });
   });
   var ethJob = rpc('eth_getBalance', [S.addr, 'latest'])
     .then(function(r){ return fromUnits(BigInt(r), 18); }).catch(function(){ return 0; });
-  return Promise.all([Promise.all(jobs), ethJob]).then(function(out){
-    S.tokens = out[0]; S.eth = out[1];
+  var discJob = discoverTokens().then(function(l){ S.discErr = ''; return l; })
+    .catch(function(e){ S.discErr = e.message || 'sin respuesta'; return []; });
+
+  return Promise.all([Promise.all(baseJobs), ethJob, discJob]).then(function(o){
+    var map = {};
+    o[2].forEach(function(t){ map[t.addr] = t; });               /* descubiertos */
+    o[0].forEach(function(t){ map[t.addr] = Object.assign({}, map[t.addr] || {}, t); }); /* los fijos mandan */
+    S.tokens = Object.keys(map).map(function(k){ return map[k]; });
+    S.eth = o[1];
   });
 }
 function loadPrices(){
-  var addrs = allTokens().map(function(t){ return t.addr; });
-  var jobs = addrs.map(function(a){
-    return fetch('https://api.dexscreener.com/latest/dex/tokens/'+a)
+  var addrs = S.tokens.map(function(t){ return t.addr; });
+  var chunks = [];
+  for(var i = 0; i < addrs.length; i += 25) chunks.push(addrs.slice(i, i + 25));
+  var best = {};
+  return Promise.all(chunks.map(function(c){
+    return fetch('https://api.dexscreener.com/latest/dex/tokens/' + c.join(','))
       .then(function(r){ return r.json(); })
       .then(function(j){
-        var pairs = (j && j.pairs || []).filter(function(p){ return p.chainId==='worldchain'; });
-        if(!pairs.length) return null;
-        pairs.sort(function(x,y){ return (y.liquidity&&y.liquidity.usd||0)-(x.liquidity&&x.liquidity.usd||0); });
-        var p = pairs[0];
-        var usd = parseFloat(p.priceUsd);
-        return isFinite(usd) ? {a:a, usd:usd} : null;
-      }).catch(function(){ return null; });
-  });
-  return Promise.all(jobs).then(function(res){
+        ((j && j.pairs) || []).forEach(function(p){
+          if(p.chainId !== 'worldchain') return;
+          var a = String((p.baseToken && p.baseToken.address) || '').toLowerCase();
+          var usd = parseFloat(p.priceUsd);
+          var liq = (p.liquidity && p.liquidity.usd) || 0;
+          if(!isFinite(usd) || !a) return;
+          if(!best[a] || liq > best[a].liq) best[a] = {usd: usd, liq: liq};
+        });
+      }).catch(function(){});
+  })).then(function(){
     var m = {};
-    res.forEach(function(r){ if(r) m[r.a]=r.usd; });
-    /* USDC ancla a 1 si el feed falla */
+    Object.keys(best).forEach(function(k){ m[k] = best[k].usd; });
     var usdc = tokBySym('USDC');
-    if(usdc && !m[usdc.addr]) m[usdc.addr]=1;
+    if(usdc && !m[usdc.addr]) m[usdc.addr] = 1;
     S.prices = m;
   });
 }
 function refreshAll(showToast){
   if(!S.addr) return;
   $('total-sub').textContent = t('loading');
-  Promise.all([loadBalances(), loadPrices()]).then(function(){
+  loadBalances().then(loadPrices).then(function(){
     renderWallet();
-    var wld = S.tokens.filter(function(x){ return x.sym==='WLD'; })[0];
+    var wld = S.tokens.filter(function(x){ return x.sym === 'WLD'; })[0];
     if(wld && wld.bal >= 1) completeMission('hold');
-    if(showToast) toast(LANG==='es' ? 'Saldos actualizados' : 'Balances updated');
-  }).catch(function(e){
-    $('total-sub').textContent = (LANG==='es'?'No se pudo leer la cadena':'Could not read the chain');
+    if(showToast) toast(LANG === 'es' ? 'Saldos actualizados' : 'Balances updated');
+  }).catch(function(){
+    $('total-sub').textContent = (LANG === 'es' ? 'No se pudo leer la cadena' : 'Could not read the chain');
   });
 }
 
 /* ═══════════ render ═══════════ */
 function renderAll(){ applyLang(); renderWallet(); renderEarn(); renderDisc(); renderProfile(); renderAdsPlans(); }
+function looksSpam(r){
+  if(r.base) return false;
+  if(r.px > 0) return false;
+  var s = ((r.sym || '') + ' ' + (r.name || '')).toLowerCase();
+  return /(https?:|www\.|\.com|\.io|\.xyz|\.org|claim|airdrop|reward|visit|bonus)/.test(s);
+}
 function renderWallet(){
   var total = 0, html = '';
-  var rows = S.tokens.slice().map(function(tk){
-    var px = S.prices[tk.addr] || 0;
-    return Object.assign({}, tk, {usd: tk.bal * px, px: px});
+  var rows = S.tokens.map(function(tk){
+    var px = S.prices[tk.addr] || tk.px || 0;
+    return Object.assign({}, tk, {px: px, usd: tk.bal * px});
+  }).filter(function(r){ return r.base || r.bal > 0; });
+
+  var weth = tokBySym('WETH');
+  var ethPx = (weth && S.prices[weth.addr]) || 0;
+  if(S.eth > 0) rows.push({sym:'ETH', name:'Ether', addr:'native', dec:18, base:true, bal:S.eth, px:ethPx, usd:S.eth*ethPx});
+
+  rows.forEach(function(r){ r.spam = looksSpam(r); if(!r.spam) total += (r.usd || 0); });
+  rows.sort(function(a, b){
+    if(a.spam !== b.spam) return a.spam ? 1 : -1;
+    return (b.usd || 0) - (a.usd || 0) || (b.bal - a.bal);
   });
-  var ethPx = S.prices[tokBySym('WETH') ? tokBySym('WETH').addr : ''] || 0;
-  if(S.eth > 0) rows.push({sym:'ETH', name:'Ether', addr:'native', dec:18, bal:S.eth, px:ethPx, usd:S.eth*ethPx});
-  rows.sort(function(a,b){ return (b.usd||0)-(a.usd||0) || b.bal-a.bal; });
-  rows.forEach(function(r){ total += (r.usd||0); });
   S.totalUsd = total;
 
   rows.forEach(function(r){
+    var sub = r.spam ? (LANG === 'es' ? '⚠️ sin precio · verifica antes de tocarlo' : '⚠️ no price · verify before touching')
+                     : esc(r.name);
     html += '<div class="row">'
-      + '<div class="tk">'+esc(r.sym.slice(0,4))+'</div>'
-      + '<div class="grow"><div class="t1">'+esc(r.sym)+'</div><div class="t2">'+esc(r.name)+'</div></div>'
-      + '<div class="rt"><div class="t1">'+fmtAmt(r.bal)+'</div>'
-      + '<div class="t2">'+(r.px ? fmtUsd(r.usd) : '—')+'</div></div></div>';
+      + '<div class="tk"' + (r.spam ? ' style="background:linear-gradient(140deg,#3A2A55,#2C1B4A);color:var(--mut)"' : '') + '>'
+      + esc(r.sym.slice(0,4)) + '</div>'
+      + '<div class="grow"><div class="t1">' + esc(r.sym) + '</div><div class="t2">' + sub + '</div></div>'
+      + '<div class="rt"><div class="t1">' + fmtAmt(r.bal) + '</div>'
+      + '<div class="t2">' + (r.px ? fmtUsd(r.usd) : '—') + '</div></div></div>';
   });
-  $('list-tokens').innerHTML = html || '<div class="empty">'+(LANG==='es'?'Sin tokens todavía.':'No tokens yet.')+'</div>';
+  if(S.discErr){
+    html += '<div class="note">' + (LANG === 'es'
+      ? 'No se pudieron listar todos tus tokens ahora mismo (' + esc(S.discErr) + '). Se muestran los conocidos; toca Actualizar saldos para reintentar.'
+      : 'Could not list every token right now (' + esc(S.discErr) + '). Showing known ones; tap Refresh balances to retry.') + '</div>';
+  }
+  $('list-tokens').innerHTML = html || '<div class="empty">' + (LANG === 'es' ? 'Sin tokens todavía.' : 'No tokens yet.') + '</div>';
   $('total-usd').textContent = fmtUsd(total);
-  var wld = rows.filter(function(x){ return x.sym==='WLD'; })[0];
-  $('total-sub').textContent = wld ? (fmtAmt(wld.bal)+' WLD') : (LANG==='es'?'Sin WLD':'No WLD');
-  $('chip-user').textContent = S.user ? ('@'+S.user) : short(S.addr);
+  var wld = rows.filter(function(x){ return x.sym === 'WLD'; })[0];
+  $('total-sub').textContent = wld ? (fmtAmt(wld.bal) + ' WLD') : (LANG === 'es' ? 'Sin WLD' : 'No WLD');
+  $('chip-user').textContent = S.user ? ('@' + S.user) : short(S.addr);
 }
 function earnTab(k){
   S.earnTab=k;

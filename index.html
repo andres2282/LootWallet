@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>LOOT WALLET</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,600;0,700;1,600;1,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0512; --bg2:#0F0719; --surf:#170C28; --surf2:#1F1136;
+  --line:#2C1B4A; --vio:#8B5CF6; --pur:#A855F7; --cy:#22D3EE;
+  --txt:#F2ECFF; --mut:#9C8CC0; --grn:#2FD98A; --red:#FF5C7A; --amb:#FFB84D;
+  --disp:'Chakra Petch',system-ui,sans-serif;
+  --body:'Inter',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);font-family:var(--body);overscroll-behavior:none}
+body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:16px}
+.hidden{display:none !important}
+::-webkit-scrollbar{width:0;height:0}
+
+/* estelas del logo: elemento firma */
+.streaks{position:absolute;inset:0;overflow:hidden;pointer-events:none;opacity:.5}
+.streaks i{position:absolute;left:-30%;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,var(--cy),var(--pur));
+  animation:dash 3.4s cubic-bezier(.2,.7,.3,1) infinite}
+.streaks i:nth-child(1){top:22%;width:52%;animation-delay:0s}
+.streaks i:nth-child(2){top:41%;width:70%;animation-delay:.5s;opacity:.7}
+.streaks i:nth-child(3){top:63%;width:44%;animation-delay:1.1s;opacity:.55}
+.streaks i:nth-child(4){top:80%;width:60%;animation-delay:1.7s;opacity:.4}
+@keyframes dash{0%{transform:translateX(0)}60%{transform:translateX(180%)}100%{transform:translateX(180%);opacity:0}}
+@media (prefers-reduced-motion:reduce){.streaks i{animation:none;opacity:.25}}
+
+/* splash */
+#splash{position:fixed;inset:0;z-index:90;background:
+  radial-gradient(120% 80% at 50% 0%,#2A1152 0%,var(--bg) 62%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center}
+#splash img{width:190px;height:190px;border-radius:38px;box-shadow:0 22px 60px rgba(139,92,246,.35)}
+#splash h1{font-family:var(--disp);font-style:italic;font-weight:700;font-size:34px;letter-spacing:.02em;margin:22px 0 4px}
+#splash p{color:var(--mut);margin:0 0 30px;font-size:15px}
+.btn{display:block;width:100%;padding:16px;border-radius:16px;font-weight:700;font-size:16px;
+  background:linear-gradient(100deg,var(--vio),var(--pur) 55%,var(--cy));color:#0A0512;
+  box-shadow:0 10px 30px rgba(139,92,246,.32);transition:transform .12s}
+.btn:active{transform:scale(.975)}
+.btn.ghost{background:var(--surf);color:var(--txt);border:1px solid var(--line);box-shadow:none}
+.btn.mini{padding:11px 14px;font-size:14px;border-radius:12px;width:auto;display:inline-block}
+.btn[disabled]{opacity:.45;pointer-events:none}
+#splash .btn{max-width:340px}
+.langbar{position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;display:flex;gap:6px}
+.langbar button{padding:7px 12px;border-radius:10px;background:var(--surf);border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--mut)}
+.langbar button.on{color:var(--txt);border-color:var(--vio)}
+
+/* header */
+header{position:sticky;top:0;z-index:40;background:rgba(10,5,18,.86);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;
+  display:flex;align-items:center;gap:10px}
+header img{width:34px;height:34px;border-radius:10px}
+.hname{font-family:var(--disp);font-style:italic;font-weight:700;font-size:17px;line-height:1}
+.hsub{font-size:11px;color:var(--mut);letter-spacing:.06em;text-transform:uppercase}
+.chip{margin-left:auto;background:var(--surf);border:1px solid var(--line);border-radius:999px;
+  padding:7px 12px;font-size:12px;font-weight:600;color:var(--mut);max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+main{padding:16px 16px 8px;max-width:560px;margin:0 auto;animation:fade .22s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+h2{font-family:var(--disp);font-style:italic;font-weight:700;font-size:20px;margin:0 0 2px}
+.sec{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);font-weight:700;margin:22px 0 10px}
+.sec:first-child{margin-top:4px}
+
+/* saldo */
+.balcard{position:relative;overflow:hidden;border-radius:22px;padding:22px 20px 20px;
+  background:linear-gradient(150deg,#2B1355,#150A28 60%);border:1px solid var(--line)}
+.balcard .lbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);font-weight:700}
+.balnum{font-family:var(--disp);font-weight:700;font-size:40px;line-height:1.05;margin-top:6px;letter-spacing:-.01em}
+.balsub{color:var(--mut);font-size:13px;margin-top:4px}
+.acts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px;position:relative}
+.act{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.09);border-radius:16px;
+  padding:12px 6px;text-align:center;font-size:12px;font-weight:700;transition:transform .12s}
+.act:active{transform:scale(.95)}
+.act b{display:block;font-size:20px;font-weight:400;margin-bottom:4px}
+
+/* listas */
+.row{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surf);
+  border:1px solid var(--line);border-radius:16px;margin-bottom:10px;width:100%;text-align:left}
+.row:active{background:var(--surf2)}
+.tk{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--disp);font-weight:700;font-size:13px;background:linear-gradient(140deg,var(--vio),var(--cy));color:#0A0512;flex:0 0 auto}
+.grow{flex:1;min-width:0}
+.t1{font-weight:600;font-size:15px}
+.t2{font-size:12px;color:var(--mut);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt{text-align:right;flex:0 0 auto}
+.rt .t1{font-family:var(--disp);font-weight:600}
+.empty{padding:26px 16px;text-align:center;color:var(--mut);font-size:14px;
+  border:1px dashed var(--line);border-radius:16px}
+
+/* tabs internas */
+.pills{display:flex;gap:8px;margin-bottom:14px}
+.pill{flex:1;padding:11px;border-radius:12px;background:var(--surf);border:1px solid var(--line);
+  font-size:13px;font-weight:700;color:var(--mut)}
+.pill.on{color:var(--txt);border-color:var(--vio);background:var(--surf2)}
+
+/* tarjetas */
+.card{background:var(--surf);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px}
+.card h3{margin:0 0 4px;font-size:16px;font-weight:700}
+.card p{margin:0;color:var(--mut);font-size:13px;line-height:1.5}
+.tag{display:inline-block;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:800;
+  letter-spacing:.08em;text-transform:uppercase;background:rgba(139,92,246,.16);color:#C4B5FD;border:1px solid rgba(139,92,246,.3)}
+.tag.live{background:rgba(47,217,138,.14);color:var(--grn);border-color:rgba(47,217,138,.3)}
+.tag.soon{background:rgba(255,184,77,.13);color:var(--amb);border-color:rgba(255,184,77,.3)}
+.tag.done{background:rgba(255,255,255,.06);color:var(--mut);border-color:var(--line)}
+.between{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.bar{height:6px;border-radius:6px;background:var(--surf2);overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--vio),var(--cy))}
+
+/* nav */
+nav{position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(10,5,18,.93);
+  backdrop-filter:blur(14px);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(4,1fr);padding:8px 6px calc(8px + env(safe-area-inset-bottom))}
+nav button{padding:6px 2px;text-align:center;font-size:10px;font-weight:700;color:var(--mut);letter-spacing:.02em}
+nav button b{display:block;font-size:20px;font-weight:400;margin-bottom:3px;filter:grayscale(1) opacity(.6)}
+nav button.on{color:var(--txt)}
+nav button.on b{filter:none}
+
+/* hojas (fuera de main a propósito) */
+.sheet{position:fixed;inset:0;z-index:70;display:flex;align-items:flex-end;justify-content:center;
+  background:rgba(4,2,8,.72);backdrop-filter:blur(3px)}
+.sheet>div{width:100%;max-width:560px;max-height:92vh;overflow-y:auto;background:var(--bg2);
+  border:1px solid var(--line);border-bottom:0;border-radius:24px 24px 0 0;
+  padding:18px 16px calc(24px + env(safe-area-inset-bottom));animation:up .24s cubic-bezier(.2,.8,.3,1)}
+@keyframes up{from{transform:translateY(28px);opacity:0}to{transform:none;opacity:1}}
+.sh-top{display:flex;align-items:center;margin-bottom:14px}
+.sh-top h3{font-family:var(--disp);font-style:italic;font-weight:700;font-size:19px;margin:0;flex:1}
+.x{width:34px;height:34px;border-radius:50%;background:var(--surf);border:1px solid var(--line);font-size:16px;color:var(--mut)}
+label{display:block;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-weight:700;margin:14px 0 6px}
+.inp{width:100%;padding:14px;border-radius:14px;background:var(--surf);border:1px solid var(--line);color:var(--txt)}
+.inp:focus{outline:2px solid var(--vio);outline-offset:1px}
+textarea.inp{min-height:78px;resize:vertical}
+.amtrow{display:flex;align-items:center;gap:10px;background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:6px 12px}
+.amtrow input{flex:1;min-width:0;background:none;border:0;color:var(--txt);font-family:var(--disp);font-weight:700;font-size:24px;padding:10px 0}
+.amtrow input:focus{outline:none}
+.selbtn{display:flex;align-items:center;gap:7px;background:var(--surf2);border:1px solid var(--line);
+  border-radius:999px;padding:8px 12px;font-weight:700;font-size:14px;flex:0 0 auto}
+.maxb{font-size:11px;font-weight:800;color:var(--cy);padding:6px 9px;border:1px solid rgba(34,211,238,.35);border-radius:9px}
+.kv{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;color:var(--mut)}
+.kv b{color:var(--txt);font-weight:600}
+.swapmid{display:flex;justify-content:center;margin:-6px 0}
+.flip{width:40px;height:40px;border-radius:13px;background:var(--surf2);border:1px solid var(--line);font-size:16px}
+.note{font-size:12px;color:var(--mut);line-height:1.55;background:var(--surf);border:1px solid var(--line);
+  border-radius:14px;padding:12px;margin-top:12px}
+.err{background:rgba(255,92,122,.1);border:1px solid rgba(255,92,122,.4);color:#FFC2CE;
+  border-radius:14px;padding:13px;font-size:13px;line-height:1.5;margin:12px 0;word-break:break-word}
+.ok{background:rgba(47,217,138,.1);border:1px solid rgba(47,217,138,.35);color:#B6F5D8;
+  border-radius:14px;padding:13px;font-size:13px;margin:12px 0;word-break:break-word}
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:95;
+  background:var(--surf2);border:1px solid var(--vio);border-radius:14px;padding:12px 18px;
+  font-size:14px;font-weight:600;box-shadow:0 12px 40px rgba(0,0,0,.5);max-width:88vw;text-align:center}
+#qr{display:flex;justify-content:center;padding:16px;background:#fff;border-radius:18px;margin:6px 0 14px}
+.addrbox{background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:14px;
+  font-size:13px;word-break:break-all;font-family:ui-monospace,monospace;line-height:1.5}
+.spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.25);border-top-color:var(--cy);
+  border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:-3px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.mini{font-size:11px;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<!-- ══════════ SPLASH ══════════ -->
+<div id="splash">
+  <div class="streaks"><i></i><i></i><i></i><i></i></div>
+  <div class="langbar">
+    <button id="lang-es" onclick="setLang('es')">ES</button>
+    <button id="lang-en" onclick="setLang('en')">EN</button>
+  </div>
+  <img src="data:image/webp;base64,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" alt="LOOT WALLET">
+  <h1>LOOT WALLET</h1>
+  <p>Your Web3 loot starts here.</p>
+  <button class="btn" id="btn-connect" onclick="connect()" data-i18n="connect">Conectar wallet</button>
+  <div id="splash-msg" class="mini" style="margin-top:16px;max-width:340px"></div>
+</div>
+
+<!-- ══════════ APP ══════════ -->
+<div id="app" class="hidden">
+
+<header>
+  <img src="data:image/webp;base64,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" alt="">
+  <div>
+    <div class="hname">LOOT</div>
+    <div class="hsub">World Chain</div>
+  </div>
+  <button class="chip" id="chip-user" onclick="go('profile')">…</button>
+</header>
+
+<!-- WALLET -->
+<main id="v-wallet">
+  <div class="balcard">
+    <div class="streaks"><i></i><i></i><i></i><i></i></div>
+    <div class="lbl" data-i18n="totalBal">Saldo total</div>
+    <div class="balnum" id="total-usd">$0.00</div>
+    <div class="balsub" id="total-sub" data-i18n="loading">Cargando…</div>
+    <div class="acts">
+      <button class="act" onclick="openSend()"><b>📤</b><span data-i18n="send">Enviar</span></button>
+      <button class="act" onclick="openReceive()"><b>📥</b><span data-i18n="receive">Recibir</span></button>
+      <button class="act" onclick="openSwap()"><b>💱</b><span data-i18n="swap">Swap</span></button>
+    </div>
+  </div>
+
+  <div class="sec between">
+    <span data-i18n="myTokens">Mis tokens</span>
+    <button class="mini" style="letter-spacing:0;text-transform:none" onclick="openAddToken()" data-i18n="addToken">+ Agregar token</button>
+  </div>
+  <div id="list-tokens"></div>
+  <button class="btn ghost" onclick="refreshAll(true)" data-i18n="refresh">Actualizar saldos</button>
+</main>
+
+<!-- EARN -->
+<main id="v-earn" class="hidden">
+  <h2 data-i18n="earnTitle">Gana</h2>
+  <p class="mini" style="margin:0 0 14px" data-i18n="earnSub">Airdrops y misiones dentro de World Chain.</p>
+  <div class="pills">
+    <button class="pill on" id="pill-air" onclick="earnTab('air')">🎁 Airdrops</button>
+    <button class="pill" id="pill-mis" onclick="earnTab('mis')">🎯 <span data-i18n="missions">Misiones</span></button>
+  </div>
+  <div id="earn-air"></div>
+  <div id="earn-mis" class="hidden"></div>
+</main>
+
+<!-- DISCOVER -->
+<main id="v-disc" class="hidden">
+  <h2>🚀 <span data-i18n="discTitle">Descubrir proyectos</span></h2>
+  <p class="mini" style="margin:0 0 14px" data-i18n="discSub">Mini apps y tokens vivos en World Chain.</p>
+  <div id="list-disc"></div>
+
+  <div class="card" style="background:linear-gradient(150deg,#2B1355,#150A28 60%);position:relative;overflow:hidden">
+    <div class="streaks"><i></i><i></i><i></i><i></i></div>
+    <div class="tag">LOOT ADS 📢</div>
+    <h3 style="margin-top:10px">Where Web3 projects meet active users.</h3>
+    <p data-i18n="adsPitch">Pon tu proyecto arriba de esta lista y llega a gente que ya usa World Chain todos los días.</p>
+    <button class="btn" style="margin-top:14px" onclick="openAds()" data-i18n="promote">📢 Promocionar mi proyecto</button>
+  </div>
+</main>
+
+<!-- PROFILE -->
+<main id="v-profile" class="hidden">
+  <h2 data-i18n="profTitle">Perfil</h2>
+  <div class="card">
+    <div class="between"><span class="mini" data-i18n="user">Usuario</span><b id="p-user">—</b></div>
+    <div class="between" style="margin-top:10px"><span class="mini" data-i18n="wallet">Wallet</span></div>
+    <div class="addrbox" id="p-addr" style="margin-top:6px">—</div>
+    <button class="btn ghost" style="margin-top:12px" onclick="copyAddr()" data-i18n="copy">Copiar dirección</button>
+  </div>
+
+  <div class="card">
+    <div class="between"><b data-i18n="lootPts">LOOT Points</b><b id="p-pts" style="font-family:var(--disp)">0</b></div>
+    <p style="margin-top:8px" data-i18n="ptsNote">Los puntos se guardan en este dispositivo por ahora. Cuando exista el contrato de LOOT, pasan a la cadena.</p>
+  </div>
+
+  <div class="sec" data-i18n="settings">Ajustes</div>
+  <div class="card">
+    <div class="between"><span data-i18n="language">Idioma</span>
+      <span><button class="btn mini ghost" onclick="setLang('es')">ES</button>
+      <button class="btn mini ghost" onclick="setLang('en')">EN</button></span></div>
+  </div>
+  <button class="btn ghost" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
+  <div id="diag-out"></div>
+  <div class="note" style="margin-top:14px">
+    <b>Build <span id="p-build"></span></b><br>
+    <span data-i18n="buildNote">Si al recargar no cambia este número, Vercel todavía sirve el archivo viejo.</span>
+  </div>
+  <div id="cfg-warn"></div>
+</main>
+
+<nav>
+  <button id="n-wallet" class="on" onclick="go('wallet')"><b>👛</b><span data-i18n="nWallet">Wallet</span></button>
+  <button id="n-earn" onclick="go('earn')"><b>🎁</b><span data-i18n="nEarn">Gana</span></button>
+  <button id="n-disc" onclick="go('disc')"><b>🚀</b><span data-i18n="nDisc">Descubrir</span></button>
+  <button id="n-profile" onclick="go('profile')"><b>👤</b><span data-i18n="nProf">Perfil</span></button>
+</nav>
+</div>
+
+<!-- ══════════ HOJAS (siempre fuera de los <main>) ══════════ -->
+
+<div class="sheet hidden" id="sh-send"><div>
+  <div class="sh-top"><h3 data-i18n="sendTitle">📤 Enviar</h3><button class="x" onclick="closeSheet('sh-send')">✕</button></div>
+  <label data-i18n="token">Token</label>
+  <button class="row" onclick="pickToken('send')" style="margin:0">
+    <div class="tk" id="send-ico">—</div>
+    <div class="grow"><div class="t1" id="send-sym">—</div><div class="t2" id="send-bal">—</div></div>
+    <div class="mini">▾</div>
+  </button>
+  <label data-i18n="toAddr">Dirección de destino</label>
+  <input class="inp" id="send-to" placeholder="0x…" autocomplete="off" spellcheck="false">
+  <label data-i18n="amount">Cantidad</label>
+  <div class="amtrow">
+    <input id="send-amt" inputmode="decimal" placeholder="0.0" oninput="sendPreview()">
+    <button class="maxb" onclick="sendMax()">MAX</button>
+  </div>
+  <div id="send-msg"></div>
+  <button class="btn" style="margin-top:16px" id="send-go" onclick="doSend()" data-i18n="sendNow">Enviar</button>
+</div></div>
+
+<div class="sheet hidden" id="sh-recv"><div>
+  <div class="sh-top"><h3 data-i18n="recvTitle">📥 Recibir</h3><button class="x" onclick="closeSheet('sh-recv')">✕</button></div>
+  <div id="qr"></div>
+  <div class="addrbox" id="recv-addr">—</div>
+  <button class="btn" style="margin-top:14px" onclick="copyAddr()" data-i18n="copy">Copiar dirección</button>
+  <div class="note" data-i18n="recvNote">Esta dirección solo recibe tokens de World Chain. Si te mandan tokens de otra red, se pierden.</div>
+</div></div>
+
+<div class="sheet hidden" id="sh-swap"><div>
+  <div class="sh-top"><h3>💱 Swap</h3><button class="x" onclick="closeSheet('sh-swap')">✕</button></div>
+  <label data-i18n="youPay">Pagas</label>
+  <div class="amtrow">
+    <input id="sw-in" inputmode="decimal" placeholder="0.0" oninput="quoteSoon()">
+    <button class="maxb" onclick="swapMax()">MAX</button>
+    <button class="selbtn" onclick="pickToken('swapIn')"><span id="sw-in-sym">WLD</span> ▾</button>
+  </div>
+  <div class="mini" id="sw-in-bal" style="margin-top:6px">—</div>
+  <div class="swapmid"><button class="flip" onclick="flipSwap()">⇅</button></div>
+  <label data-i18n="youGet">Recibes (estimado)</label>
+  <div class="amtrow">
+    <input id="sw-out" placeholder="0.0" readonly>
+    <button class="selbtn" onclick="pickToken('swapOut')"><span id="sw-out-sym">USDC</span> ▾</button>
+  </div>
+  <div class="mini" id="sw-out-bal" style="margin-top:6px">—</div>
+  <div class="card" style="margin-top:14px">
+    <div class="kv"><span data-i18n="rate">Tasa</span><b id="sw-rate">—</b></div>
+    <div class="kv"><span data-i18n="poolFee">Comisión del pool</span><b id="sw-fee">—</b></div>
+    <div class="kv"><span data-i18n="minOut">Mínimo a recibir</span><b id="sw-min">—</b></div>
+    <div class="kv"><span data-i18n="slip">Tolerancia</span>
+      <span><button class="btn mini ghost sl" data-s="1" onclick="setSlip(1)">1%</button>
+      <button class="btn mini ghost sl" data-s="3" onclick="setSlip(3)">3%</button>
+      <button class="btn mini ghost sl" data-s="5" onclick="setSlip(5)">5%</button></span></div>
+  </div>
+  <div id="sw-msg"></div>
+  <button class="btn" style="margin-top:14px" id="sw-go" onclick="doSwap()" data-i18n="swapNow">Intercambiar</button>
+  <div class="note" data-i18n="swapNote">El swap va directo de tu wallet al pool de Uniswap en World Chain. LOOT no cobra comisión propia.</div>
+</div></div>
+
+<div class="sheet hidden" id="sh-pick"><div>
+  <div class="sh-top"><h3 data-i18n="pickTitle">Elegir token</h3><button class="x" onclick="closeSheet('sh-pick')">✕</button></div>
+  <div id="pick-list"></div>
+</div></div>
+
+<div class="sheet hidden" id="sh-add"><div>
+  <div class="sh-top"><h3 data-i18n="addTitle">Agregar token</h3><button class="x" onclick="closeSheet('sh-add')">✕</button></div>
+  <label data-i18n="contract">Dirección del contrato</label>
+  <input class="inp" id="add-addr" placeholder="0x…" autocomplete="off" spellcheck="false">
+  <div id="add-msg"></div>
+  <button class="btn" style="margin-top:14px" onclick="doAddToken()" data-i18n="addBtn">Buscar y agregar</button>
+</div></div>
+
+<div class="sheet hidden" id="sh-ads"><div>
+  <div class="sh-top"><h3>📢 LOOT ADS</h3><button class="x" onclick="closeSheet('sh-ads')">✕</button></div>
+  <p class="mini">Where Web3 projects meet active users.</p>
+  <label data-i18n="plan">Plan</label>
+  <div id="ads-plans"></div>
+  <label data-i18n="projName">Nombre del proyecto</label>
+  <input class="inp" id="ads-name" placeholder="EggChain">
+  <label data-i18n="projTag">Frase corta</label>
+  <input class="inp" id="ads-tag" placeholder="Granja de gallinas que produce $EGG">
+  <label data-i18n="projLink">Enlace</label>
+  <input class="inp" id="ads-link" placeholder="https://world.org/mini-app?app_id=…" autocomplete="off" spellcheck="false">
+  <label data-i18n="projContact">Telegram o X para avisarte</label>
+  <input class="inp" id="ads-contact" placeholder="@usuario">
+  <div id="ads-msg"></div>
+  <button class="btn" style="margin-top:16px" id="ads-go" onclick="doAds()" data-i18n="payPromote">Pagar y publicar</button>
+  <div class="note" data-i18n="adsNote">Versión inicial: el pago va a la tesorería de LOOT y la publicación se revisa a mano antes de salir en Descubrir. Cuando esté el contrato de anuncios, será automático.</div>
+</div></div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   LOOT WALLET · World Chain (480) · un solo archivo
+   ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
+   ═══════════════════════════════════════════════════════════ */
+const BUILD = 'LW b1';
+const LOOT_APP_ID = 'app_PEGA_AQUI_TU_APP_ID';        // ← Developer Portal
+const TREASURY    = '0xPEGA_AQUI_TU_WALLET_DE_COBRO'; // ← cobros de LOOT ADS
+
+const CHAIN_ID = 480;
+const RPCS = [
+  'https://worldchain-mainnet.g.alchemy.com/public',
+  'https://480.rpc.thirdweb.com',
+  'https://worldchain-mainnet.gateway.tenderly.co',
+  'https://worldchain.drpc.org'
+];
+const UNI_FACTORY = '0x7a5028bda40e7b173c278c5342087826455ea25a';
+const UNI_QUOTER  = '0x10158d43e6cc414dee1bd1eb0efc6a5cbcff244c';
+const UNI_ROUTER  = '0x091ad9e2e6e5ed44c1c66db50e49a601f9f36cf6';
+const FEES = [100, 500, 3000, 10000];
+
+const BASE_TOKENS = [
+  {sym:'WLD',  name:'Worldcoin',     addr:'0x2cfc85d8e48f8eab294be644d9e25c3030863003', dec:18},
+  {sym:'USDC', name:'USD Coin',      addr:'0x79a02482a880bce3f13e09da970dc34db4cd24d1', dec:6},
+  {sym:'WETH', name:'Wrapped Ether', addr:'0x4200000000000000000000000000000000000006', dec:18},
+  {sym:'WBTC', name:'Wrapped BTC',   addr:'0x03c7054bcb39f7b2e5b2c7acb37583e32d70cfa3', dec:8}
+];
+
+/* Editables: se muestran en Descubrir / Airdrops */
+const PROJECTS = [
+  {name:'EggChain', tag:'Granja de gallinas que produce $EGG', tagEn:'Chicken farm that mints $EGG', cat:'Game',
+   url:'https://world.org/mini-app?app_id=app_f6ff90911ff3aab25e6a0786af833e0c'},
+  {name:'World Launch', tag:'Crea y lanza tu token en World Chain', tagEn:'Create and launch your token on World Chain', cat:'Launchpad',
+   url:'https://world.org/mini-app?app_id=app_4c8557dba0140e1937b44b7208c13e6a'}
+];
+const AIRDROPS = [
+  {name:'LOOT Genesis', tag:'Los primeros usuarios de LOOT WALLET suman puntos desde hoy.',
+   tagEn:'Early LOOT WALLET users start stacking points today.', status:'live', url:''}
+];
+const ADS_PLANS = [
+  {id:0, wld:5,  hours:24,  label:'24 h'},
+  {id:1, wld:15, hours:168, label:'7 días', labelEn:'7 days'},
+  {id:2, wld:40, hours:720, label:'30 días', labelEn:'30 days'}
+];
+const MISSIONS = [
+  {id:'connect', pts:50,  es:'Conecta tu wallet',         en:'Connect your wallet'},
+  {id:'hold',    pts:100, es:'Ten al menos 1 WLD',        en:'Hold at least 1 WLD'},
+  {id:'swap',    pts:150, es:'Haz tu primer swap en LOOT',en:'Make your first swap in LOOT'},
+  {id:'send',    pts:100, es:'Envía tokens desde LOOT',   en:'Send tokens from LOOT'},
+  {id:'disc',    pts:50,  es:'Abre un proyecto de Descubrir', en:'Open a project from Discover'}
+];
+
+/* ═══════════ i18n ═══════════ */
+const I18N = {
+  es:{connect:'Conectar wallet',totalBal:'Saldo total',loading:'Cargando…',send:'Enviar',receive:'Recibir',
+      swap:'Swap',myTokens:'Mis tokens',addToken:'+ Agregar token',refresh:'Actualizar saldos',
+      earnTitle:'Gana',earnSub:'Airdrops y misiones dentro de World Chain.',missions:'Misiones',
+      discTitle:'Descubrir proyectos',discSub:'Mini apps y tokens vivos en World Chain.',
+      adsPitch:'Pon tu proyecto arriba de esta lista y llega a gente que ya usa World Chain todos los días.',
+      promote:'📢 Promocionar mi proyecto',profTitle:'Perfil',user:'Usuario',wallet:'Wallet',copy:'Copiar dirección',
+      lootPts:'LOOT Points',ptsNote:'Los puntos se guardan en este dispositivo por ahora. Cuando exista el contrato de LOOT, pasan a la cadena.',
+      settings:'Ajustes',language:'Idioma',diag:'🔧 Probar conexión',
+      buildNote:'Si al recargar no cambia este número, Vercel todavía sirve el archivo viejo.',
+      nWallet:'Wallet',nEarn:'Gana',nDisc:'Descubrir',nProf:'Perfil',
+      sendTitle:'📤 Enviar',token:'Token',toAddr:'Dirección de destino',amount:'Cantidad',sendNow:'Enviar',
+      recvTitle:'📥 Recibir',recvNote:'Esta dirección solo recibe tokens de World Chain. Si te mandan tokens de otra red, se pierden.',
+      youPay:'Pagas',youGet:'Recibes (estimado)',rate:'Tasa',poolFee:'Comisión del pool',minOut:'Mínimo a recibir',
+      slip:'Tolerancia',swapNow:'Intercambiar',
+      swapNote:'El swap va directo de tu wallet al pool de Uniswap en World Chain. LOOT no cobra comisión propia.',
+      pickTitle:'Elegir token',addTitle:'Agregar token',contract:'Dirección del contrato',addBtn:'Buscar y agregar',
+      plan:'Plan',projName:'Nombre del proyecto',projTag:'Frase corta',projLink:'Enlace',
+      projContact:'Telegram o X para avisarte',payPromote:'Pagar y publicar',
+      adsNote:'Versión inicial: el pago va a la tesorería de LOOT y la publicación se revisa a mano antes de salir en Descubrir. Cuando esté el contrato de anuncios, será automático.'},
+  en:{connect:'Connect wallet',totalBal:'Total balance',loading:'Loading…',send:'Send',receive:'Receive',
+      swap:'Swap',myTokens:'My tokens',addToken:'+ Add token',refresh:'Refresh balances',
+      earnTitle:'Earn',earnSub:'Airdrops and missions across World Chain.',missions:'Missions',
+      discTitle:'Discover projects',discSub:'Mini apps and tokens live on World Chain.',
+      adsPitch:'Put your project at the top of this list and reach people already using World Chain every day.',
+      promote:'📢 Promote my project',profTitle:'Profile',user:'User',wallet:'Wallet',copy:'Copy address',
+      lootPts:'LOOT Points',ptsNote:'Points live on this device for now. They move on-chain once the LOOT contract ships.',
+      settings:'Settings',language:'Language',diag:'🔧 Test connection',
+      buildNote:'If this number does not change after a reload, Vercel is still serving the old file.',
+      nWallet:'Wallet',nEarn:'Earn',nDisc:'Discover',nProf:'Profile',
+      sendTitle:'📤 Send',token:'Token',toAddr:'Recipient address',amount:'Amount',sendNow:'Send',
+      recvTitle:'📥 Receive',recvNote:'This address only receives World Chain tokens. Tokens sent from another network are lost.',
+      youPay:'You pay',youGet:'You get (estimated)',rate:'Rate',poolFee:'Pool fee',minOut:'Minimum received',
+      slip:'Slippage',swapNow:'Swap',
+      swapNote:'The swap goes straight from your wallet to the Uniswap pool on World Chain. LOOT takes no fee.',
+      pickTitle:'Pick a token',addTitle:'Add token',contract:'Contract address',addBtn:'Look up and add',
+      plan:'Plan',projName:'Project name',projTag:'One-line pitch',projLink:'Link',
+      projContact:'Telegram or X so we can reach you',payPromote:'Pay and publish',
+      adsNote:'First version: payment goes to the LOOT treasury and each listing is reviewed by hand before it shows in Discover. It becomes automatic once the ads contract ships.'}
+};
+let LANG = (localStorage.getItem('loot.lang')) || ((navigator.language||'en').toLowerCase().startsWith('es') ? 'es' : 'en');
+function t(k){ return (I18N[LANG] && I18N[LANG][k]) || (I18N.es[k]) || k; }
+function applyLang(){
+  document.documentElement.lang = LANG;
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    var k = el.getAttribute('data-i18n');
+    if(I18N[LANG][k]) el.textContent = I18N[LANG][k];
+  });
+  var a=$('lang-es'), b=$('lang-en');
+  if(a) a.className = LANG==='es' ? 'on' : '';
+  if(b) b.className = LANG==='en' ? 'on' : '';
+}
+function setLang(l){ LANG=l; localStorage.setItem('loot.lang', l); applyLang(); renderAll(); }
+
+/* ═══════════ utilidades ═══════════ */
+function $(id){ return document.getElementById(id); }
+function num(v){ if(v===null||v===undefined) return NaN; return parseFloat(String(v).replace(',', '.')); }
+function esc(s){ return String(s===undefined||s===null?'':s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function short(a){ return a ? a.slice(0,6)+'…'+a.slice(-4) : '—'; }
+function fmtUsd(n){
+  if(!isFinite(n)) return '—';
+  if(n>=1000) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0});
+  if(n>=1) return '$'+n.toFixed(2);
+  if(n>0) return '$'+n.toFixed(4);
+  return '$0.00';
+}
+function fmtAmt(n){
+  if(!isFinite(n)) return '—';
+  if(n===0) return '0';
+  if(n>=1000) return n.toLocaleString('en-US',{maximumFractionDigits:2});
+  if(n>=1) return n.toFixed(4).replace(/0+$/,'').replace(/\.$/,'');
+  return n.toFixed(8).replace(/0+$/,'').replace(/\.$/,'');
+}
+var toastTimer=null;
+function toast(msg){
+  var el=$('toast'); el.textContent=msg; el.classList.remove('hidden');
+  clearTimeout(toastTimer); toastTimer=setTimeout(function(){ el.classList.add('hidden'); }, 2600);
+}
+/* los errores de World App se muestran en cuadro persistente: allí no hay consola */
+function showBox(id, kind, html){
+  var el=$(id); if(!el) return;
+  el.innerHTML = html ? '<div class="'+kind+'">'+html+'</div>' : '';
+}
+function copy(txt){
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt); }
+  else { var i=document.createElement('textarea'); i.value=txt; document.body.appendChild(i); i.select();
+    try{ document.execCommand('copy'); }catch(e){} document.body.removeChild(i); }
+}
+
+/* ═══════════ RPC ═══════════ */
+var rpcId = 1;
+function rpcOne(url, method, params){
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({jsonrpc:'2.0', id: rpcId++, method: method, params: params})})
+   .then(function(r){ return r.json(); })
+   .then(function(j){ if(j.error) throw new Error(j.error.message||'rpc'); if(j.result===undefined) throw new Error('sin resultado'); return j.result; });
+}
+function rpc(method, params){
+  return Promise.any(RPCS.map(function(u){ return rpcOne(u, method, params); }));
+}
+function sel(sig){ return ethers.id(sig).slice(0,10); }
+function enc(types, values){ return ethers.AbiCoder.defaultAbiCoder().encode(types, values).slice(2); }
+function dec(types, data){ return ethers.AbiCoder.defaultAbiCoder().decode(types, data); }
+function ethCall(to, data){ return rpc('eth_call', [{to: to.toLowerCase(), data: data}, 'latest']); }
+function toUnits(amountStr, dec){ return ethers.parseUnits(String(amountStr), dec); }
+function fromUnits(bi, dec){ return parseFloat(ethers.formatUnits(bi, dec)); }
+
+/* ═══════════ MiniKit ═══════════ */
+var MK = null;
+function loadScript(src){
+  return new Promise(function(res, rej){
+    var s=document.createElement('script'); s.src=src; s.async=true;
+    s.onload=function(){ res(true); }; s.onerror=function(){ rej(new Error('no carga '+src)); };
+    document.body.appendChild(s);
+  });
+}
+function resolveMK(){
+  var g = window._MiniKit || window.MiniKit;
+  if(!g) return null;
+  if(typeof g.install === 'function') return g;
+  if(g.MiniKit && typeof g.MiniKit.install === 'function') return g.MiniKit;
+  return null;
+}
+var MK_CDNS = [
+  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
+  'https://unpkg.com/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
+  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js/dist/index.umd.js'
+];
+function initMiniKit(){
+  var chain = Promise.reject(new Error('start'));
+  MK_CDNS.forEach(function(u){ chain = chain.catch(function(){ return loadScript(u); }); });
+  return chain.then(function(){
+    /* espera activa: el objeto tarda en aparecer aunque el script ya cargó */
+    return new Promise(function(res){
+      var n=0;
+      var iv=setInterval(function(){
+        var m=resolveMK();
+        if(m || ++n>30){ clearInterval(iv); res(m); }
+      }, 100);
+    });
+  }).then(function(m){
+    if(!m) return null;
+    try{
+      if(LOOT_APP_ID && LOOT_APP_ID.indexOf('app_')===0 && LOOT_APP_ID.indexOf('PEGA')<0) m.install(LOOT_APP_ID);
+      else m.install();
+    }catch(e){}
+    MK = m; window._MiniKit = m;
+    return m;
+  }).catch(function(){ return null; });
+}
+function mkInstalled(){
+  if(!MK) return false;
+  try{ return typeof MK.isInstalled === 'function' ? MK.isInstalled() : true; }catch(e){ return false; }
+}
+/* algunas versiones exponen los comandos sueltos y otras bajo commandsAsync */
+function mkCall(name, args){
+  if(!MK) return Promise.reject(new Error('MiniKit no disponible'));
+  if(MK.commandsAsync && typeof MK.commandsAsync[name] === 'function') return MK.commandsAsync[name](args);
+  if(typeof MK[name] === 'function') return Promise.resolve(MK[name](args));
+  return Promise.reject(new Error('comando '+name+' no disponible'));
+}
+function payload(res){
+  if(!res) return null;
+  return res.finalPayload || res.payload || res;
+}
+function txError(p){
+  if(!p) return 'Sin respuesta de World App';
+  var c = p.error_code || p.errorCode || p.details || p.status;
+  var map = {
+    invalid_contract: 'Ese contrato no está autorizado. Agrégalo en Developer Portal → Mini App → Permissions → Contract Entrypoints.',
+    invalid_operation:'World App rechazó la operación. Suele ser un contrato o token sin dar de alta en el portal.',
+    user_rejected:    'Cancelaste la firma.',
+    simulation_failed:'La simulación falló: revisa saldo, aprobación o que el pool exista.',
+    gas_limit_exceeded:'La transacción pide demasiado gas para World App.'
+  };
+  return map[c] || ('World App devolvió: '+esc(JSON.stringify(c)));
+}
+
+/* ═══════════ estado ═══════════ */
+var S = {
+  addr:'', user:'', tokens:[], eth:0, prices:{}, totalUsd:0,
+  pick:'', send:{tok:null}, swap:{in:'WLD', out:'USDC', fee:null, quote:0, slip:5},
+  pts: parseInt(localStorage.getItem('loot.pts')||'0', 10),
+  done: JSON.parse(localStorage.getItem('loot.missions')||'{}'),
+  earnTab:'air', adsPlan:0, view:'wallet', busy:false
+};
+function saveMissions(){
+  localStorage.setItem('loot.pts', String(S.pts));
+  localStorage.setItem('loot.missions', JSON.stringify(S.done));
+}
+function completeMission(id){
+  if(S.done[id]) return;
+  var m = MISSIONS.filter(function(x){ return x.id===id; })[0];
+  if(!m) return;
+  S.done[id]=true; S.pts += m.pts; saveMissions();
+  toast('🎯 +'+m.pts+' LOOT Points');
+  renderMissions(); renderProfile();
+}
+function customTokens(){
+  try{ return JSON.parse(localStorage.getItem('loot.custom')||'[]'); }catch(e){ return []; }
+}
+function allTokens(){ return BASE_TOKENS.concat(customTokens()); }
+function tokBySym(sym){ return allTokens().filter(function(t){ return t.sym===sym; })[0]; }
+
+/* ═══════════ navegación ═══════════ */
+function go(v){
+  S.view=v;
+  ['wallet','earn','disc','profile'].forEach(function(k){
+    var m=$('v-'+k), n=$('n-'+k);
+    if(m) m.classList.toggle('hidden', k!==v);
+    if(n) n.className = (k===v ? 'on' : '');
+  });
+  window.scrollTo(0,0);
+  if(v==='profile') renderProfile();
+  if(v==='earn') renderEarn();
+}
+function openSheet(id){ $(id).classList.remove('hidden'); }
+function closeSheet(id){ $(id).classList.add('hidden'); }
+document.addEventListener('click', function(e){
+  if(e.target.classList && e.target.classList.contains('sheet')) e.target.classList.add('hidden');
+});
+
+/* ═══════════ conexión ═══════════ */
+function connect(){
+  var b=$('btn-connect');
+  b.disabled=true; b.innerHTML='<span class="spin"></span> …';
+  $('splash-msg').textContent='';
+  initMiniKit().then(function(m){
+    if(!m || !mkInstalled()){
+      throw new Error(LANG==='es'
+        ? 'Abre LOOT WALLET dentro de World App. Fuera de World App no hay wallet que conectar.'
+        : 'Open LOOT WALLET inside World App. Outside World App there is no wallet to connect.');
+    }
+    var nonce = (Date.now().toString(36) + Math.random().toString(36).slice(2)).padEnd(16,'0').slice(0,24);
+    return mkCall('walletAuth', {nonce: nonce, statement: 'LOOT WALLET · Your Web3 loot starts here.'});
+  }).then(function(res){
+    var p = payload(res);
+    if(p && p.status === 'error') throw new Error(txError(p));
+    var a = (p && p.address) || (MK && MK.walletAddress) || '';
+    if(!a) throw new Error(LANG==='es' ? 'World App no devolvió una dirección.' : 'World App returned no address.');
+    S.addr = a.toLowerCase();
+    return getUsername(S.addr);
+  }).then(function(u){
+    S.user = u || '';
+    $('splash').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    completeMission('connect');
+    renderAll();
+    refreshAll(false);
+  }).catch(function(e){
+    b.disabled=false; b.textContent=t('connect');
+    $('splash-msg').innerHTML = '<div class="err">'+esc(e.message||String(e))+'</div>';
+  });
+}
+function getUsername(a){
+  try{
+    if(MK && MK.user && MK.user.username) return Promise.resolve(MK.user.username);
+    if(MK && typeof MK.getUserByAddress === 'function'){
+      return Promise.resolve(MK.getUserByAddress(a)).then(function(u){ return u && u.username; })
+        .catch(function(){ return ''; });
+    }
+  }catch(e){}
+  return Promise.resolve('');
+}
+
+/* ═══════════ saldos y precios ═══════════ */
+function loadBalances(){
+  var list = allTokens();
+  var jobs = list.map(function(tk){
+    var data = sel('balanceOf(address)') + enc(['address'],[S.addr]);
+    return ethCall(tk.addr, data).then(function(r){
+      return Object.assign({}, tk, {bal: fromUnits(BigInt(r), tk.dec)});
+    }).catch(function(){ return Object.assign({}, tk, {bal: 0, failed:true}); });
+  });
+  var ethJob = rpc('eth_getBalance', [S.addr, 'latest'])
+    .then(function(r){ return fromUnits(BigInt(r), 18); }).catch(function(){ return 0; });
+  return Promise.all([Promise.all(jobs), ethJob]).then(function(out){
+    S.tokens = out[0]; S.eth = out[1];
+  });
+}
+function loadPrices(){
+  var addrs = allTokens().map(function(t){ return t.addr; });
+  var jobs = addrs.map(function(a){
+    return fetch('https://api.dexscreener.com/latest/dex/tokens/'+a)
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var pairs = (j && j.pairs || []).filter(function(p){ return p.chainId==='worldchain'; });
+        if(!pairs.length) return null;
+        pairs.sort(function(x,y){ return (y.liquidity&&y.liquidity.usd||0)-(x.liquidity&&x.liquidity.usd||0); });
+        var p = pairs[0];
+        var usd = parseFloat(p.priceUsd);
+        return isFinite(usd) ? {a:a, usd:usd} : null;
+      }).catch(function(){ return null; });
+  });
+  return Promise.all(jobs).then(function(res){
+    var m = {};
+    res.forEach(function(r){ if(r) m[r.a]=r.usd; });
+    /* USDC ancla a 1 si el feed falla */
+    var usdc = tokBySym('USDC');
+    if(usdc && !m[usdc.addr]) m[usdc.addr]=1;
+    S.prices = m;
+  });
+}
+function refreshAll(showToast){
+  if(!S.addr) return;
+  $('total-sub').textContent = t('loading');
+  Promise.all([loadBalances(), loadPrices()]).then(function(){
+    renderWallet();
+    var wld = S.tokens.filter(function(x){ return x.sym==='WLD'; })[0];
+    if(wld && wld.bal >= 1) completeMission('hold');
+    if(showToast) toast(LANG==='es' ? 'Saldos actualizados' : 'Balances updated');
+  }).catch(function(e){
+    $('total-sub').textContent = (LANG==='es'?'No se pudo leer la cadena':'Could not read the chain');
+  });
+}
+
+/* ═══════════ render ═══════════ */
+function renderAll(){ applyLang(); renderWallet(); renderEarn(); renderDisc(); renderProfile(); renderAdsPlans(); }
+function renderWallet(){
+  var total = 0, html = '';
+  var rows = S.tokens.slice().map(function(tk){
+    var px = S.prices[tk.addr] || 0;
+    return Object.assign({}, tk, {usd: tk.bal * px, px: px});
+  });
+  var ethPx = S.prices[tokBySym('WETH') ? tokBySym('WETH').addr : ''] || 0;
+  if(S.eth > 0) rows.push({sym:'ETH', name:'Ether', addr:'native', dec:18, bal:S.eth, px:ethPx, usd:S.eth*ethPx});
+  rows.sort(function(a,b){ return (b.usd||0)-(a.usd||0) || b.bal-a.bal; });
+  rows.forEach(function(r){ total += (r.usd||0); });
+  S.totalUsd = total;
+
+  rows.forEach(function(r){
+    html += '<div class="row">'
+      + '<div class="tk">'+esc(r.sym.slice(0,4))+'</div>'
+      + '<div class="grow"><div class="t1">'+esc(r.sym)+'</div><div class="t2">'+esc(r.name)+'</div></div>'
+      + '<div class="rt"><div class="t1">'+fmtAmt(r.bal)+'</div>'
+      + '<div class="t2">'+(r.px ? fmtUsd(r.usd) : '—')+'</div></div></div>';
+  });
+  $('list-tokens').innerHTML = html || '<div class="empty">'+(LANG==='es'?'Sin tokens todavía.':'No tokens yet.')+'</div>';
+  $('total-usd').textContent = fmtUsd(total);
+  var wld = rows.filter(function(x){ return x.sym==='WLD'; })[0];
+  $('total-sub').textContent = wld ? (fmtAmt(wld.bal)+' WLD') : (LANG==='es'?'Sin WLD':'No WLD');
+  $('chip-user').textContent = S.user ? ('@'+S.user) : short(S.addr);
+}
+function earnTab(k){
+  S.earnTab=k;
+  $('pill-air').className = 'pill'+(k==='air'?' on':'');
+  $('pill-mis').className = 'pill'+(k==='mis'?' on':'');
+  $('earn-air').classList.toggle('hidden', k!=='air');
+  $('earn-mis').classList.toggle('hidden', k!=='mis');
+}
+function renderEarn(){ renderAirdrops(); renderMissions(); }
+function renderAirdrops(){
+  var h='';
+  AIRDROPS.forEach(function(a, i){
+    var tag = a.status==='live' ? '<span class="tag live">'+(LANG==='es'?'Abierto':'Live')+'</span>'
+            : a.status==='soon' ? '<span class="tag soon">'+(LANG==='es'?'Pronto':'Soon')+'</span>'
+            : '<span class="tag done">'+(LANG==='es'?'Cerrado':'Ended')+'</span>';
+    h += '<div class="card"><div class="between"><h3>'+esc(a.name)+'</h3>'+tag+'</div>'
+      + '<p style="margin-top:6px">'+esc(LANG==='es'?a.tag:(a.tagEn||a.tag))+'</p>'
+      + (a.url ? '<button class="btn ghost" style="margin-top:12px" onclick="openUrl('+i+',\'air\')">'+(LANG==='es'?'Abrir':'Open')+'</button>' : '')
+      + '</div>';
+  });
+  $('earn-air').innerHTML = h || '<div class="empty">'+(LANG==='es'?'Nada abierto ahora mismo.':'Nothing open right now.')+'</div>';
+}
+function renderMissions(){
+  var h = '<div class="card"><div class="between"><b>LOOT Points</b>'
+        + '<b style="font-family:var(--disp);font-size:20px">'+S.pts+'</b></div>'
+        + '<div class="bar"><i style="width:'+Math.min(100, S.pts/5)+'%"></i></div></div>';
+  MISSIONS.forEach(function(m){
+    var ok = !!S.done[m.id];
+    h += '<div class="row"><div class="tk" style="'+(ok?'background:linear-gradient(140deg,#2FD98A,#22D3EE)':'')+'">'
+      + (ok?'✓':'🎯')+'</div>'
+      + '<div class="grow"><div class="t1">'+esc(LANG==='es'?m.es:m.en)+'</div>'
+      + '<div class="t2">'+(ok ? (LANG==='es'?'Completada':'Done') : '+'+m.pts+' pts')+'</div></div>'
+      + '<div class="rt"><div class="t1">'+(ok?'+'+m.pts:'—')+'</div></div></div>';
+  });
+  $('earn-mis').innerHTML = h;
+}
+function renderDisc(){
+  var h='';
+  PROJECTS.forEach(function(p, i){
+    h += '<div class="card"><div class="between"><h3>'+esc(p.name)+'</h3><span class="tag">'+esc(p.cat)+'</span></div>'
+      + '<p style="margin-top:6px">'+esc(LANG==='es'?p.tag:(p.tagEn||p.tag))+'</p>'
+      + '<button class="btn ghost" style="margin-top:12px" onclick="openUrl('+i+',\'proj\')">'+(LANG==='es'?'Abrir':'Open')+'</button></div>';
+  });
+  $('list-disc').innerHTML = h || '<div class="empty">'+(LANG==='es'?'Todavía no hay proyectos.':'No projects yet.')+'</div>';
+}
+function openUrl(i, kind){
+  var u = kind==='proj' ? PROJECTS[i].url : AIRDROPS[i].url;
+  if(!u) return;
+  if(kind==='proj') completeMission('disc');
+  window.open(u, '_blank');
+}
+function renderProfile(){
+  $('p-user').textContent = S.user ? ('@'+S.user) : (LANG==='es'?'sin nombre':'no username');
+  $('p-addr').textContent = S.addr || '—';
+  $('p-pts').textContent = S.pts;
+  $('p-build').textContent = BUILD;
+  var warn = '';
+  if(LOOT_APP_ID.indexOf('PEGA')>=0) warn += (LANG==='es'
+    ? 'Falta poner el App ID de la Mini App en la constante LOOT_APP_ID.'
+    : 'LOOT_APP_ID is still a placeholder.')+'<br>';
+  if(TREASURY.indexOf('PEGA')>=0) warn += (LANG==='es'
+    ? 'Falta poner la wallet de cobro en la constante TREASURY: LOOT ADS no puede cobrar.'
+    : 'TREASURY is still a placeholder: LOOT ADS cannot collect payments.');
+  showBox('cfg-warn', 'err', warn);
+}
+function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Address copied'); }
+
+/* ═══════════ enviar ═══════════ */
+function openSend(){
+  if(!S.send.tok) S.send.tok = 'WLD';
+  renderSendTok(); showBox('send-msg','err',''); $('send-amt').value=''; openSheet('sh-send');
+}
+function renderSendTok(){
+  var tk = tokBySym(S.send.tok) || BASE_TOKENS[0];
+  var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
+  $('send-ico').textContent = tk.sym.slice(0,4);
+  $('send-sym').textContent = tk.sym;
+  $('send-bal').textContent = (LANG==='es'?'Disponible: ':'Available: ') + fmtAmt(row?row.bal:0) + ' ' + tk.sym;
+}
+function sendMax(){
+  var row = S.tokens.filter(function(x){ return x.sym===S.send.tok; })[0];
+  $('send-amt').value = row ? String(row.bal) : '0';
+  sendPreview();
+}
+function sendPreview(){ showBox('send-msg','err',''); }
+function doSend(){
+  var tk = tokBySym(S.send.tok);
+  var to = ($('send-to').value||'').trim().toLowerCase();
+  var amt = num($('send-amt').value);
+  if(!/^0x[0-9a-f]{40}$/.test(to)) return showBox('send-msg','err', LANG==='es'
+    ? 'Esa dirección no es válida. Debe empezar con 0x y tener 42 caracteres.'
+    : 'That address is not valid. It must start with 0x and be 42 characters long.');
+  if(!isFinite(amt) || amt<=0) return showBox('send-msg','err', LANG==='es'?'Escribe una cantidad.':'Enter an amount.');
+  var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
+  if(row && amt > row.bal) return showBox('send-msg','err', LANG==='es'
+    ? 'No te alcanza: tienes '+fmtAmt(row.bal)+' '+tk.sym+'.'
+    : 'Not enough: you have '+fmtAmt(row.bal)+' '+tk.sym+'.');
+
+  var units;
+  try{ units = toUnits(amt, tk.dec); }catch(e){ return showBox('send-msg','err','Cantidad inválida'); }
+  var data = sel('transfer(address,uint256)') + enc(['address','uint256'],[to, units]);
+  busy('send-go', true);
+  showBox('send-msg','err','');
+  mkCall('sendTransaction', {transaction:[{to: tk.addr, data: data, value:'0x0'}]})
+   .then(function(res){
+      var p = payload(res);
+      if(p && p.status === 'error') throw new Error(txError(p));
+      showBox('send-msg','ok', (LANG==='es'?'Enviado. ':'Sent. ') + fmtAmt(amt)+' '+tk.sym+' → '+short(to));
+      $('send-amt').value='';
+      completeMission('send');
+      setTimeout(function(){ refreshAll(false); }, 6000);
+   }).catch(function(e){ showBox('send-msg','err', esc(e.message||String(e))); })
+   .then(function(){ busy('send-go', false, t('sendNow')); });
+}
+function busy(id, on, label){
+  var b=$(id); if(!b) return;
+  if(on){ b.disabled=true; b.innerHTML='<span class="spin"></span>'; }
+  else { b.disabled=false; b.textContent = label || b.textContent; }
+}
+
+/* ═══════════ recibir ═══════════ */
+function openReceive(){
+  $('recv-addr').textContent = S.addr;
+  var box=$('qr'); box.innerHTML='';
+  if(window.QRCode){
+    try{ new QRCode(box, {text:S.addr, width:190, height:190, correctLevel: QRCode.CorrectLevel.M}); }
+    catch(e){ box.innerHTML='<div class="mini" style="color:#333">'+esc(S.addr)+'</div>'; }
+  } else {
+    box.innerHTML='<div class="mini" style="color:#333;word-break:break-all;padding:10px">'+esc(S.addr)+'</div>';
+  }
+  openSheet('sh-recv');
+}
+
+/* ═══════════ elegir token ═══════════ */
+function pickToken(target){
+  S.pick = target;
+  var h='';
+  allTokens().forEach(function(tk){
+    var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
+    h += '<button class="row" onclick="choose(\''+tk.sym+'\')">'
+      + '<div class="tk">'+esc(tk.sym.slice(0,4))+'</div>'
+      + '<div class="grow"><div class="t1">'+esc(tk.sym)+'</div><div class="t2">'+esc(tk.name)+'</div></div>'
+      + '<div class="rt"><div class="t1">'+fmtAmt(row?row.bal:0)+'</div></div></button>';
+  });
+  $('pick-list').innerHTML = h;
+  openSheet('sh-pick');
+}
+function choose(sym){
+  if(S.pick==='send'){ S.send.tok = sym; renderSendTok(); }
+  if(S.pick==='swapIn'){ if(S.swap.out===sym) S.swap.out = S.swap.in; S.swap.in = sym; }
+  if(S.pick==='swapOut'){ if(S.swap.in===sym) S.swap.in = S.swap.out; S.swap.out = sym; }
+  closeSheet('sh-pick');
+  if(S.pick.indexOf('swap')===0){ S.swap.fee=null; renderSwap(); quoteSoon(); }
+}
+
+/* ═══════════ agregar token ═══════════ */
+function openAddToken(){ $('add-addr').value=''; showBox('add-msg','err',''); openSheet('sh-add'); }
+function doAddToken(){
+  var a = ($('add-addr').value||'').trim().toLowerCase();
+  if(!/^0x[0-9a-f]{40}$/.test(a)) return showBox('add-msg','err', LANG==='es'?'Dirección inválida.':'Invalid address.');
+  if(allTokens().some(function(t){ return t.addr===a; })) return showBox('add-msg','err', LANG==='es'?'Ese token ya está en la lista.':'That token is already listed.');
+  showBox('add-msg','ok', LANG==='es'?'Leyendo el contrato…':'Reading the contract…');
+  Promise.all([
+    ethCall(a, sel('symbol()')), ethCall(a, sel('name()')), ethCall(a, sel('decimals()'))
+  ]).then(function(r){
+    var sym = dec(['string'], r[0])[0];
+    var nm  = dec(['string'], r[1])[0];
+    var d   = Number(dec(['uint8'], r[2])[0]);
+    var list = customTokens();
+    list.push({sym: sym, name: nm, addr: a, dec: d});
+    localStorage.setItem('loot.custom', JSON.stringify(list));
+    showBox('add-msg','ok', sym+' '+(LANG==='es'?'agregado.':'added.'));
+    setTimeout(function(){ closeSheet('sh-add'); refreshAll(false); }, 900);
+  }).catch(function(){
+    showBox('add-msg','err', LANG==='es'
+      ? 'No se pudo leer ese contrato como token ERC-20 en World Chain.'
+      : 'Could not read that contract as an ERC-20 on World Chain.');
+  });
+}
+
+/* ═══════════ swap ═══════════ */
+function openSwap(){
+  showBox('sw-msg','err',''); $('sw-in').value=''; $('sw-out').value='';
+  renderSwap(); setSlip(S.swap.slip); openSheet('sh-swap');
+}
+function renderSwap(){
+  $('sw-in-sym').textContent = S.swap.in;
+  $('sw-out-sym').textContent = S.swap.out;
+  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
+  var bo = S.tokens.filter(function(x){ return x.sym===S.swap.out; })[0];
+  var lbl = LANG==='es' ? 'Disponible: ' : 'Available: ';
+  $('sw-in-bal').textContent  = lbl + fmtAmt(bi?bi.bal:0) + ' ' + S.swap.in;
+  $('sw-out-bal').textContent = lbl + fmtAmt(bo?bo.bal:0) + ' ' + S.swap.out;
+}
+function flipSwap(){
+  var a = S.swap.in; S.swap.in = S.swap.out; S.swap.out = a;
+  S.swap.fee = null; $('sw-in').value=''; $('sw-out').value='';
+  renderSwap(); quoteSoon();
+}
+function swapMax(){
+  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
+  $('sw-in').value = bi ? String(bi.bal) : '0';
+  quoteSoon();
+}
+function setSlip(v){
+  S.swap.slip = v;
+  document.querySelectorAll('.sl').forEach(function(b){
+    b.style.borderColor = (parseInt(b.getAttribute('data-s'),10)===v) ? 'var(--vio)' : 'var(--line)';
+    b.style.color = (parseInt(b.getAttribute('data-s'),10)===v) ? 'var(--txt)' : 'var(--mut)';
+  });
+  updateMin();
+}
+/* busca el pool con más liquidez entre las cuatro comisiones */
+function findFee(a, b){
+  if(S.swap.fee) return Promise.resolve(S.swap.fee);
+  var jobs = FEES.map(function(f){
+    var d = sel('getPool(address,address,uint24)') + enc(['address','address','uint24'],[a,b,f]);
+    return ethCall(UNI_FACTORY, d).then(function(r){
+      var pool = dec(['address'], r)[0];
+      if(/^0x0{40}$/i.test(pool)) return null;
+      return ethCall(pool, sel('liquidity()')).then(function(l){
+        var liq = BigInt(l);
+        return liq > 0n ? {fee:f, pool:pool.toLowerCase(), liq:liq} : null;
+      }).catch(function(){ return null; });
+    }).catch(function(){ return null; });
+  });
+  return Promise.all(jobs).then(function(res){
+    var ok = res.filter(Boolean);
+    if(!ok.length) throw new Error(LANG==='es'
+      ? 'No hay pool de Uniswap para ese par en World Chain.'
+      : 'There is no Uniswap pool for that pair on World Chain.');
+    ok.sort(function(x,y){ return x.liq > y.liq ? -1 : 1; });
+    S.swap.fee = ok[0];
+    return ok[0];
+  });
+}
+var quoteTimer=null;
+function quoteSoon(){
+  clearTimeout(quoteTimer);
+  quoteTimer = setTimeout(doQuote, 420);
+}
+function doQuote(){
+  var amt = num($('sw-in').value);
+  if(!isFinite(amt) || amt<=0){ $('sw-out').value=''; S.swap.quote=0; $('sw-rate').textContent='—'; updateMin(); return; }
+  var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
+  if(!ti || !to) return;
+  $('sw-out').value = '…';
+  findFee(ti.addr, to.addr).then(function(f){
+    $('sw-fee').textContent = (f.fee/10000)+'%';
+    var units = toUnits(amt, ti.dec);
+    var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
+          + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, f.fee, 0]]);
+    return ethCall(UNI_QUOTER, d);
+  }).then(function(r){
+    var out = dec(['uint256','uint160','uint32','uint256'], r)[0];
+    var human = fromUnits(out, to.dec);
+    S.swap.quote = out;
+    $('sw-out').value = fmtAmt(human);
+    $('sw-rate').textContent = '1 '+S.swap.in+' ≈ '+fmtAmt(human/amt)+' '+S.swap.out;
+    showBox('sw-msg','err','');
+    updateMin();
+  }).catch(function(e){
+    $('sw-out').value=''; S.swap.quote=0;
+    showBox('sw-msg','err', esc(e.message||String(e)));
+    updateMin();
+  });
+}
+function updateMin(){
+  var to = tokBySym(S.swap.out);
+  if(!S.swap.quote || !to){ $('sw-min').textContent='—'; return; }
+  var min = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip*10)) / 1000n;
+  $('sw-min').textContent = fmtAmt(fromUnits(min, to.dec)) + ' ' + S.swap.out;
+}
+/* SwapRouter02 no lleva deadline; el clásico sí. Detecta cuál es. */
+function routerKind(){
+  if(S.swap.kind) return Promise.resolve(S.swap.kind);
+  return ethCall(UNI_ROUTER, sel('positionManager()'))
+    .then(function(r){ S.swap.kind = (r && r.length >= 66) ? '02' : 'classic'; return S.swap.kind; })
+    .catch(function(){ S.swap.kind='02'; return '02'; });
+}
+function doSwap(){
+  var amt = num($('sw-in').value);
+  var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
+  if(!isFinite(amt) || amt<=0) return showBox('sw-msg','err', LANG==='es'?'Escribe una cantidad.':'Enter an amount.');
+  if(!S.swap.quote) return showBox('sw-msg','err', LANG==='es'?'Espera la cotización.':'Wait for the quote.');
+  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
+  if(bi && amt > bi.bal) return showBox('sw-msg','err', LANG==='es'
+    ? 'No te alcanza: tienes '+fmtAmt(bi.bal)+' '+ti.sym+'.'
+    : 'Not enough: you have '+fmtAmt(bi.bal)+' '+ti.sym+'.');
+
+  var units = toUnits(amt, ti.dec);
+  var minOut = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip*10)) / 1000n;
+  busy('sw-go', true); showBox('sw-msg','err','');
+
+  routerKind().then(function(kind){
+    var data;
+    if(kind === '02'){
+      data = sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
+           + enc(['tuple(address,address,uint24,address,uint256,uint256,uint160)'],
+                 [[ti.addr, to.addr, S.swap.fee.fee, S.addr, units, minOut, 0]]);
+    } else {
+      var dl = Math.floor(Date.now()/1000) + 1200;
+      data = sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))')
+           + enc(['tuple(address,address,uint24,address,uint256,uint256,uint256,uint160)'],
+                 [[ti.addr, to.addr, S.swap.fee.fee, S.addr, dl, units, minOut, 0]]);
+    }
+    var approve = sel('approve(address,uint256)') + enc(['address','uint256'],[UNI_ROUTER, units]);
+    return mkCall('sendTransaction', {transaction:[
+      {to: ti.addr,     data: approve, value:'0x0'},
+      {to: UNI_ROUTER,  data: data,    value:'0x0'}
+    ]});
+  }).then(function(res){
+    var p = payload(res);
+    if(p && p.status === 'error') throw new Error(txError(p));
+    showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ')+fmtAmt(amt)+' '+ti.sym+' → '+to.sym);
+    $('sw-in').value=''; $('sw-out').value=''; S.swap.quote=0;
+    completeMission('swap');
+    setTimeout(function(){ refreshAll(false); }, 6000);
+  }).catch(function(e){
+    showBox('sw-msg','err', esc(e.message||String(e)));
+  }).then(function(){ busy('sw-go', false, t('swapNow')); });
+}
+
+/* ═══════════ LOOT ADS ═══════════ */
+function renderAdsPlans(){
+  var h='';
+  ADS_PLANS.forEach(function(p){
+    var on = S.adsPlan===p.id;
+    h += '<button class="row" onclick="setAdsPlan('+p.id+')" style="'+(on?'border-color:var(--vio);background:var(--surf2)':'')+'">'
+      + '<div class="tk">'+(on?'✓':'📢')+'</div>'
+      + '<div class="grow"><div class="t1">'+esc(LANG==='es'?p.label:(p.labelEn||p.label))+'</div>'
+      + '<div class="t2">'+(LANG==='es'?'Destacado en Descubrir':'Featured in Discover')+'</div></div>'
+      + '<div class="rt"><div class="t1">'+p.wld+' WLD</div></div></button>';
+  });
+  $('ads-plans').innerHTML = h;
+}
+function setAdsPlan(id){ S.adsPlan=id; renderAdsPlans(); }
+function openAds(){ showBox('ads-msg','err',''); renderAdsPlans(); openSheet('sh-ads'); }
+function doAds(){
+  var plan = ADS_PLANS.filter(function(p){ return p.id===S.adsPlan; })[0];
+  var name = ($('ads-name').value||'').trim();
+  var tag  = ($('ads-tag').value||'').trim();
+  var link = ($('ads-link').value||'').trim();
+  var ct   = ($('ads-contact').value||'').trim();
+  if(!name || !tag || !link) return showBox('ads-msg','err', LANG==='es'
+    ? 'Completa nombre, frase y enlace.' : 'Fill in name, pitch and link.');
+  if(TREASURY.indexOf('PEGA')>=0) return showBox('ads-msg','err', LANG==='es'
+    ? 'La wallet de cobro todavía no está configurada en el código (TREASURY).'
+    : 'The treasury wallet is not configured yet (TREASURY).');
+  var wld = tokBySym('WLD');
+  var row = S.tokens.filter(function(x){ return x.sym==='WLD'; })[0];
+  if(row && row.bal < plan.wld) return showBox('ads-msg','err', LANG==='es'
+    ? 'Te faltan WLD: el plan cuesta '+plan.wld+' WLD y tienes '+fmtAmt(row.bal)+'.'
+    : 'Not enough WLD: the plan costs '+plan.wld+' WLD and you have '+fmtAmt(row.bal)+'.');
+
+  var units = toUnits(plan.wld, wld.dec);
+  var data = sel('transfer(address,uint256)') + enc(['address','uint256'],[TREASURY.toLowerCase(), units]);
+  busy('ads-go', true); showBox('ads-msg','err','');
+  mkCall('sendTransaction', {transaction:[{to: wld.addr, data: data, value:'0x0'}]})
+   .then(function(res){
+      var p = payload(res);
+      if(p && p.status === 'error') throw new Error(txError(p));
+      var req = {name:name, tag:tag, link:link, contact:ct, plan:plan.label, wld:plan.wld,
+                 wallet:S.addr, at:new Date().toISOString()};
+      var all = JSON.parse(localStorage.getItem('loot.ads')||'[]'); all.push(req);
+      localStorage.setItem('loot.ads', JSON.stringify(all));
+      showBox('ads-msg','ok', (LANG==='es'
+        ? 'Pago enviado. Copia estos datos y mándalos al equipo de LOOT para publicar:<br><br>'
+        : 'Payment sent. Copy these details and send them to the LOOT team to publish:<br><br>')
+        + '<code>'+esc(JSON.stringify(req))+'</code>');
+      setTimeout(function(){ refreshAll(false); }, 6000);
+   }).catch(function(e){ showBox('ads-msg','err', esc(e.message||String(e))); })
+   .then(function(){ busy('ads-go', false, t('payPromote')); });
+}
+
+/* ═══════════ diagnóstico ═══════════ */
+function runDiag(){
+  showBox('diag-out','ok', (LANG==='es'?'Probando…':'Testing…'));
+  var lines = [];
+  var jobs = RPCS.map(function(u){
+    var t0 = Date.now();
+    return rpcOne(u, 'eth_blockNumber', [])
+      .then(function(b){ lines.push('✅ '+u.replace('https://','').split('/')[0]+' · '+(Date.now()-t0)+' ms · bloque '+parseInt(b,16)); })
+      .catch(function(e){ lines.push('❌ '+u.replace('https://','').split('/')[0]+' · '+(e.message||'falla')); });
+  });
+  Promise.all(jobs).then(function(){
+    lines.push((MK && mkInstalled()) ? '✅ MiniKit activo' : '❌ MiniKit no detectado');
+    lines.push('👛 '+(S.addr||'—'));
+    showBox('diag-out','ok', lines.map(esc).join('<br>'));
+  });
+}
+
+/* ═══════════ arranque ═══════════ */
+applyLang();
+renderAdsPlans();
+$('p-build') && ($('p-build').textContent = BUILD);
+initMiniKit();
+</script>
+</body>
+</html>

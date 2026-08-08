@@ -408,7 +408,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b11';
+const BUILD = 'LW b12';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -439,8 +439,20 @@ const PROJECTS = [
    url:'https://world.org/mini-app?app_id=app_4c8557dba0140e1937b44b7208c13e6a'}
 ];
 const AIRDROPS = [
-  {name:'LOOT Genesis', tag:'Los primeros usuarios de LOOT WALLET suman puntos desde hoy.',
-   tagEn:'Early LOOT WALLET users start stacking points today.', status:'live', url:''}
+  {id:'oro', name:'ORO', type:'daily', pts:20,
+   token:'0xcd1e32b86953d79a6ac58e813d2ea7a1790cab63',
+   es:'1 ORO gratis cada día, solo por ser humano verificado con World ID.',
+   en:'1 free ORO every day, just for being a human verified with World ID.',
+   url:'https://world.org/mini-app?app_id=app_f1e44837a5e3c2af4da8925b46027645'},
+  {id:'dna', name:'DNA', type:'daily', pts:20,
+   token:'0xed49fe44fd4249a09843c2ba4bba7e50beca7113',
+   es:'Regístrate y reclama DNA todos los días. Sube de nivel invitando gente.',
+   en:'Register and claim DNA every day. Level up by inviting people.',
+   url:'https://world.org/mini-app?app_id=app_8e407cfbae7ae51c19b07faff837aeeb'},
+  {id:'orb', name:'ORB', type:'once', pts:50, token:'',
+   es:'1.000 ORB una sola vez en la vida por tener World ID. No caduca.',
+   en:'1,000 ORB once in a lifetime for having a World ID. Never expires.',
+   url:'https://world.org/mini-app?app_id=app_3876b5f39809a50bb5ebe97c997bbcf1'}
 ];
 const ADS_PLANS = [
   {id:0, wld:5,  hours:24,  label:'24 h'},
@@ -943,18 +955,81 @@ function earnTab(k){
   $('earn-mis').classList.toggle('hidden', k!=='mis');
 }
 function renderEarn(){ renderAirdrops(); renderMissions(); }
+function claimsGet(){ try{ return JSON.parse(localStorage.getItem('loot.claims') || '{}'); }catch(e){ return {}; } }
+function claimsSet(o){ try{ localStorage.setItem('loot.claims', JSON.stringify(o)); }catch(e){} }
+function airdropReady(a){
+  var c = claimsGet()[a.id] || 0;
+  if(a.type === 'once') return !c;
+  return (Date.now() - c) >= 86400000;
+}
+function airdropIn(a){
+  var c = claimsGet()[a.id] || 0;
+  var ms = 86400000 - (Date.now() - c);
+  if(ms <= 0) return '';
+  return Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm';
+}
+var airdropMetaDone = false;
+function loadAirdropMeta(){
+  if(airdropMetaDone) return;
+  airdropMetaDone = true;
+  var list = AIRDROPS.filter(function(a){ return a.token; }).map(function(a){ return a.token; });
+  if(!list.length) return;
+  jget('https://api.dexscreener.com/latest/dex/tokens/' + list.join(','), 8000).then(function(j){
+    var best = {};
+    ((j && j.pairs) || []).forEach(function(p){
+      if(p.chainId !== 'worldchain') return;
+      var a = String((p.baseToken && p.baseToken.address) || '').toLowerCase();
+      var usd = parseFloat(p.priceUsd), liq = (p.liquidity && p.liquidity.usd) || 0;
+      if(!isFinite(usd) || !a) return;
+      if(!best[a] || liq > best[a].liq) best[a] = {usd: usd, liq: liq};
+      if(p.info && p.info.imageUrl) META[a] = META[a] || p.info.imageUrl;
+    });
+    Object.keys(best).forEach(function(k){ S.prices[k] = best[k].usd; });
+    saveMeta(); renderAirdrops();
+  }).catch(function(){});
+}
 function renderAirdrops(){
-  var h='';
+  loadAirdropMeta();
+  var L = LANG === 'es', h = '';
+  h += '<div class="note" style="margin-bottom:12px">' + (L
+    ? 'Proyectos que reparten tokens gratis en World Chain. Reclamas en su app y aquí sumas LOOT Points por hacerlo. Lo que reparten es de ellos, no de LOOT.'
+    : 'Projects giving away free tokens on World Chain. You claim in their app and earn LOOT Points here for doing it. The giveaway is theirs, not LOOT\'s.') + '</div>';
+
   AIRDROPS.forEach(function(a, i){
-    var tag = a.status==='live' ? '<span class="tag live">'+(LANG==='es'?'Abierto':'Live')+'</span>'
-            : a.status==='soon' ? '<span class="tag soon">'+(LANG==='es'?'Pronto':'Soon')+'</span>'
-            : '<span class="tag done">'+(LANG==='es'?'Cerrado':'Ended')+'</span>';
-    h += '<div class="card"><div class="between"><h3>'+esc(a.name)+'</h3>'+tag+'</div>'
-      + '<p style="margin-top:6px">'+esc(LANG==='es'?a.tag:(a.tagEn||a.tag))+'</p>'
-      + (a.url ? '<button class="btn ghost" style="margin-top:12px" onclick="openUrl('+i+',\'air\')">'+(LANG==='es'?'Abrir':'Open')+'</button>' : '')
+    var ready = airdropReady(a);
+    var px = a.token ? (S.prices[a.token] || 0) : 0;
+    var tag = a.type === 'daily'
+      ? '<span class="tag live">' + (L ? 'Diario' : 'Daily') + '</span>'
+      : '<span class="tag">' + (L ? 'Una vez' : 'One time') + '</span>';
+    var icon = a.token ? tokenIcon({addr: a.token, sym: a.name}) : '<div class="tk">' + esc(a.name.slice(0,3)) + '</div>';
+    var state = ready
+      ? '<span style="color:var(--grn);font-weight:700">' + (L ? 'Disponible ahora' : 'Available now') + '</span>'
+      : (a.type === 'once' ? (L ? 'Ya reclamado' : 'Already claimed')
+                           : (L ? 'Vuelve en ' : 'Back in ') + airdropIn(a));
+    h += '<div class="card">'
+      + '<div style="display:flex;align-items:center;gap:12px">' + icon
+      + '<div class="grow"><div class="between"><h3 style="margin:0">' + esc(a.name) + '</h3>' + tag + '</div>'
+      + '<div class="t2">' + state + '</div></div></div>'
+      + '<p style="margin-top:10px">' + esc(L ? a.es : a.en) + '</p>'
+      + (px ? '<div class="kv" style="margin-top:6px"><span>' + (L ? 'Precio de 1 ' : 'Price of 1 ') + esc(a.name) + '</span><b>' + fmtUsd(px) + '</b></div>' : '')
+      + '<div class="kv"><span>' + (L ? 'Ganas' : 'You earn') + '</span><b>+' + a.pts + ' LOOT Points</b></div>'
+      + '<button class="btn' + (ready ? '' : ' ghost') + '" style="margin-top:12px" onclick="openAirdrop(' + i + ')">'
+      + (ready ? (L ? '🎁 Abrir y reclamar' : '🎁 Open and claim') : (L ? 'Abrir de todos modos' : 'Open anyway')) + '</button>'
       + '</div>';
   });
-  $('earn-air').innerHTML = h || '<div class="empty">'+(LANG==='es'?'Nada abierto ahora mismo.':'Nothing open right now.')+'</div>';
+  $('earn-air').innerHTML = h;
+}
+function openAirdrop(i){
+  var a = AIRDROPS[i];
+  var ready = airdropReady(a);
+  if(ready){
+    var c = claimsGet(); c[a.id] = Date.now(); claimsSet(c);
+    S.pts += a.pts; saveMissions();
+    toast('+' + a.pts + ' LOOT Points');
+    renderProfile();
+  }
+  renderAirdrops();
+  window.open(a.url, '_blank');
 }
 function renderMissions(){
   var h = '<div class="card"><div class="between"><b>LOOT Points</b>'
@@ -980,7 +1055,7 @@ function renderDisc(){
   $('list-disc').innerHTML = h || '<div class="empty">'+(LANG==='es'?'Todavía no hay proyectos.':'No projects yet.')+'</div>';
 }
 function openUrl(i, kind){
-  var u = kind==='proj' ? PROJECTS[i].url : AIRDROPS[i].url;
+  var u = kind === 'proj' ? PROJECTS[i].url : (AIRDROPS[i] && AIRDROPS[i].url);
   if(!u) return;
   if(kind==='proj') completeMission('disc');
   window.open(u, '_blank');

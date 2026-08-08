@@ -408,7 +408,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b10';
+const BUILD = 'LW b11';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -1231,9 +1231,20 @@ function loadChart(){
     $('tk-chartmsg').textContent = (L ? 'No se pudo cargar el gráfico · ' : 'Could not load the chart · ') + (err.message || '');
   });
 }
-/* velas armadas con los eventos Swap del pool, vía RPC */
-const RPC_LOGS = 'https://worldchain.drpc.org';
-const SWAP_TOPIC_ARGS = 'Swap(address,address,int256,int256,uint160,uint128,int24)';
+/* velas armadas con los eventos Swap del pool, vía RPC — sirve para pools V3 y V2 */
+const LOG_RPCS = ['https://worldchain.drpc.org','https://worldchain-mainnet.gateway.tenderly.co','https://480.rpc.thirdweb.com'];
+const SWAP_V3 = 'Swap(address,address,int256,int256,uint160,uint128,int24)';
+const SWAP_V2 = 'Swap(address,uint256,uint256,uint256,uint256,address)';
+function poolKind(pool){
+  return ethCall(pool, sel('slot0()')).then(function(r){
+    return (r && r.length > 66) ? 'v3' : 'v2';
+  }).catch(function(){
+    return ethCall(pool, sel('getReserves()')).then(function(){ return 'v2'; }).catch(function(){ return 'v3'; });
+  });
+}
+function getLogsAny(params){
+  return Promise.any(LOG_RPCS.map(function(u){ return rpcOne(u, 'eth_getLogs', [params]); }));
+}
 function chainCandles(R){
   var pool = TOK.pair, mine = TOK.mkt, pxNow = TOK.px;
   if(!pool) return Promise.reject(new Error('sin pool'));
@@ -1241,55 +1252,68 @@ function chainCandles(R){
   var span = Math.ceil(R.sec / BLOCK_SEC);
   return Promise.all([
     rpc('eth_blockNumber'),
-    ethCall(pool, sel('token0()'))
+    ethCall(pool, sel('token0()')),
+    poolKind(pool)
   ]).then(function(o){
     var latest = parseInt(o[0], 16);
     var token0 = ('0x' + String(o[1]).slice(-40)).toLowerCase();
+    var kind = o[2];
     var invert = token0 !== String(mine).toLowerCase();
     var from = Math.max(0, latest - span);
-    var topic = ethers.id(SWAP_TOPIC_ARGS);
+    var topic = ethers.id(kind === 'v3' ? SWAP_V3 : SWAP_V2);
     var ranges = [];
     for(var b = from; b <= latest; b += 1000) ranges.push([b, Math.min(latest, b + 999)]);
-    var logs = [];
+    var logs = [], failed = 0;
     function run(i){
       if(i >= ranges.length) return Promise.resolve();
       return Promise.all(ranges.slice(i, i + 6).map(function(rg){
-        return rpcOne(RPC_LOGS, 'eth_getLogs', [{address: pool, topics: [topic],
-          fromBlock: '0x' + rg[0].toString(16), toBlock: '0x' + rg[1].toString(16)}])
+        return getLogsAny({address: pool, topics: [topic],
+            fromBlock: '0x' + rg[0].toString(16), toBlock: '0x' + rg[1].toString(16)})
           .then(function(l){ if(Array.isArray(l)) logs = logs.concat(l); })
-          .catch(function(){});   /* con datos parciales se pinta lo que haya */
+          .catch(function(){ failed++; });   /* con datos parciales se pinta lo que haya */
       })).then(function(){ return run(i + 6); });
     }
     return run(0).then(function(){
-      if(!logs.length) throw new Error(LANG === 'es' ? 'sin operaciones en el rango' : 'no trades in range');
+      var L = LANG === 'es';
+      if(!logs.length){
+        throw new Error(failed
+          ? (L ? 'los RPC no respondieron en ' + failed + ' de ' + ranges.length + ' tramos' : failed + '/' + ranges.length + ' RPC chunks failed')
+          : (L ? 'el pool ' + kind.toUpperCase() + ' no registró operaciones en este rango' : 'no ' + kind.toUpperCase() + ' trades in this range'));
+      }
       var now = Math.floor(Date.now() / 1000);
       var pts = [];
       logs.forEach(function(lg){
         try{
-          var d = String(lg.data).slice(2);
-          var sq = BigInt('0x' + d.slice(128, 192));           /* sqrtPriceX96 */
-          var s = Number(sq) / Math.pow(2, 96);
-          var raw = s * s;
+          var d = String(lg.data).slice(2), raw;
+          if(kind === 'v3'){
+            var sq = Number(BigInt('0x' + d.slice(128, 192))) / Math.pow(2, 96);   /* sqrtPriceX96 */
+            raw = sq * sq;
+          } else {
+            var a0 = Number(BigInt('0x' + d.slice(0, 64))) + Number(BigInt('0x' + d.slice(128, 192)));
+            var a1 = Number(BigInt('0x' + d.slice(64, 128))) + Number(BigInt('0x' + d.slice(192, 256)));
+            if(!a0 || !a1) return;
+            raw = a1 / a0;
+          }
           if(!isFinite(raw) || raw <= 0) return;
           if(invert) raw = 1 / raw;
           var bn = parseInt(lg.blockNumber, 16);
           pts.push({t: now - (latest - bn) * BLOCK_SEC, p: raw});
         }catch(e){}
       });
-      if(pts.length < 2) throw new Error(LANG === 'es' ? 'sin operaciones en el rango' : 'no trades in range');
+      if(pts.length < 2) throw new Error(LANG === 'es' ? 'solo hay ' + pts.length + ' operación en el rango' : 'only ' + pts.length + ' trade in range');
       pts.sort(function(a, b){ return a.t - b.t; });
       /* el precio del pool está en el otro token: se calibra contra el precio real de ahora */
       var k = (pxNow && pts[pts.length - 1].p) ? (pxNow / pts[pts.length - 1].p) : 1;
       pts.forEach(function(x){ x.p = x.p * k; });
 
-      var t1 = now, t0 = now - R.sec, w = R.sec / R.n;
+      var t0 = now - R.sec, w = R.sec / R.n;
       var buckets = [];
       for(var i = 0; i < R.n; i++) buckets.push(null);
       pts.forEach(function(x){
         if(x.t < t0) return;
-        var i = Math.min(R.n - 1, Math.floor((x.t - t0) / w));
-        var b = buckets[i];
-        if(!b) buckets[i] = {t: t0 + i * w, o: x.p, h: x.p, l: x.p, c: x.p};
+        var idx = Math.min(R.n - 1, Math.floor((x.t - t0) / w));
+        var b = buckets[idx];
+        if(!b) buckets[idx] = {t: t0 + idx * w, o: x.p, h: x.p, l: x.p, c: x.p};
         else { b.h = Math.max(b.h, x.p); b.l = Math.min(b.l, x.p); b.c = x.p; }
       });
       var prev = null, out = [];
@@ -1297,7 +1321,7 @@ function chainCandles(R){
         if(b){ prev = b; out.push(b); }
         else if(prev) out.push({t: t0 + i * w, o: prev.c, h: prev.c, l: prev.c, c: prev.c});
       });
-      TOK.src = LANG === 'es' ? 'datos on-chain' : 'on-chain data';
+      TOK.src = (LANG === 'es' ? 'on-chain ' : 'on-chain ') + kind.toUpperCase() + (failed ? (LANG === 'es' ? ' · parcial' : ' · partial') : '');
       return out;
     });
   });

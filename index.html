@@ -333,12 +333,14 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
   <div class="card" style="margin-top:14px">
     <div class="kv"><span data-i18n="rate">Tasa</span><b id="sw-rate">—</b></div>
     <div class="kv"><span data-i18n="poolFee">Comisión del pool</span><b id="sw-fee">—</b></div>
+    <div class="kv"><span data-i18n="lootFee">Comisión LOOT</span><b id="sw-lootfee">—</b></div>
     <div class="kv"><span data-i18n="minOut">Mínimo a recibir</span><b id="sw-min">—</b></div>
     <div class="kv"><span data-i18n="slip">Tolerancia</span>
       <span><button class="btn mini ghost sl" data-s="1" onclick="setSlip(1)">1%</button>
       <button class="btn mini ghost sl" data-s="3" onclick="setSlip(3)">3%</button>
       <button class="btn mini ghost sl" data-s="5" onclick="setSlip(5)">5%</button></span></div>
   </div>
+  <div id="sw-hold"></div>
   <div id="sw-msg"></div>
   <button class="btn" style="margin-top:14px" id="sw-go" onclick="doSwap()" data-i18n="swapNow">Intercambiar</button>
   <div class="note" data-i18n="swapNote">El swap va directo de tu wallet al pool de Uniswap en World Chain. LOOT no cobra comisión propia.</div>
@@ -360,6 +362,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
 <div class="sheet hidden" id="sh-ads"><div>
   <div class="sh-top"><h3>📢 LOOT ADS</h3><button class="x" onclick="closeSheet('sh-ads')">✕</button></div>
   <p class="mini">Where Web3 projects meet active users.</p>
+  <div id="ads-req"></div>
   <label data-i18n="plan">Plan</label>
   <div id="ads-plans"></div>
   <label data-i18n="projName">Nombre del proyecto</label>
@@ -408,7 +411,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b12';
+const BUILD = 'LW b18';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -424,7 +427,19 @@ const UNI_QUOTER  = '0x10158d43e6cc414dee1bd1eb0efc6a5cbcff244c';
 const UNI_ROUTER  = '0x091ad9e2e6e5ed44c1c66db50e49a601f9f36cf6';
 const FEES = [100, 500, 3000, 10000];
 
+/* ── Comisión de la wallet (cámbialo aquí y cambia en toda la app) ──
+   Se cobra SOLO en el swap, sobre el token que vendes. Enviar y recibir son gratis. */
+const FEE_BPS        = 100;     // 1,00 % normal
+const FEE_BPS_HOLDER = 50;      // 0,50 % teniendo $LOOT
+const LOOT_TOKEN     = '0x52d70104e4d8ae1405b7fc7c5ec560cc8b55bbdb';
+const LOOT_HOLD_MIN  = 100000;  // $LOOT necesarios para el descuento
+
+/* Recompensa por visitar un anuncio: se acredita 1 vez cada 24 h por anuncio */
+const VISIT_REWARD_WLD = 0.001;
+const VISIT_COOLDOWN_H = 24;
+
 const BASE_TOKENS = [
+  {sym:'LOOT', name:'LOOT WALLET', addr: LOOT_TOKEN, dec:18},
   {sym:'WLD',  name:'Worldcoin',     addr:'0x2cfc85d8e48f8eab294be644d9e25c3030863003', dec:18},
   {sym:'USDC', name:'USD Coin',      addr:'0x79a02482a880bce3f13e09da970dc34db4cd24d1', dec:6},
   {sym:'WETH', name:'Wrapped Ether', addr:'0x4200000000000000000000000000000000000006', dec:18},
@@ -433,31 +448,23 @@ const BASE_TOKENS = [
 
 /* Editables: se muestran en Descubrir / Airdrops */
 const PROJECTS = [
-  {name:'EggChain', tag:'Granja de gallinas que produce $EGG', tagEn:'Chicken farm that mints $EGG', cat:'Game',
-   url:'https://world.org/mini-app?app_id=app_f6ff90911ff3aab25e6a0786af833e0c'},
-  {name:'World Launch', tag:'Crea y lanza tu token en World Chain', tagEn:'Create and launch your token on World Chain', cat:'Launchpad',
-   url:'https://world.org/mini-app?app_id=app_4c8557dba0140e1937b44b7208c13e6a'}
-];
-const AIRDROPS = [
-  {id:'oro', name:'ORO', type:'daily', pts:20,
-   token:'0xcd1e32b86953d79a6ac58e813d2ea7a1790cab63',
-   es:'1 ORO gratis cada día, solo por ser humano verificado con World ID.',
-   en:'1 free ORO every day, just for being a human verified with World ID.',
+  {id:'oro', name:'ORO', cat:'Airdrop', token:'0xcd1e32b86953d79a6ac58e813d2ea7a1790cab63',
+   tag:'1 ORO gratis cada día, solo por ser humano verificado con World ID.',
+   tagEn:'1 free ORO every day, just for being a human verified with World ID.',
    url:'https://world.org/mini-app?app_id=app_f1e44837a5e3c2af4da8925b46027645'},
-  {id:'dna', name:'DNA', type:'daily', pts:20,
-   token:'0xed49fe44fd4249a09843c2ba4bba7e50beca7113',
-   es:'Regístrate y reclama DNA todos los días. Sube de nivel invitando gente.',
-   en:'Register and claim DNA every day. Level up by inviting people.',
-   url:'https://world.org/mini-app?app_id=app_8e407cfbae7ae51c19b07faff837aeeb'},
-  {id:'orb', name:'ORB', type:'once', pts:50, token:'',
-   es:'1.000 ORB una sola vez en la vida por tener World ID. No caduca.',
-   en:'1,000 ORB once in a lifetime for having a World ID. Never expires.',
-   url:'https://world.org/mini-app?app_id=app_3876b5f39809a50bb5ebe97c997bbcf1'}
+  {id:'dna', name:'DNA', cat:'Airdrop', token:'0xed49fe44fd4249a09843c2ba4bba7e50beca7113',
+   tag:'Regístrate y reclama DNA todos los días. Subes de nivel invitando gente.',
+   tagEn:'Register and claim DNA every day. Level up by inviting people.',
+   url:'https://world.org/mini-app?app_id=app_8e407cfbae7ae51c19b07faff837aeeb'}
 ];
+const AIRDROPS = [];
+/* LOOT ADS se vende por TIEMPO de exhibición.
+   El primer anuncio de cada wallet se paga en $LOOT; los siguientes en WLD. */
 const ADS_PLANS = [
-  {id:0, wld:5,  hours:24,  label:'24 h'},
-  {id:1, wld:15, hours:168, label:'7 días', labelEn:'7 days'},
-  {id:2, wld:40, hours:720, label:'30 días', labelEn:'30 days'}
+  {id:0, hours:3,   pay:'LOOT', amount:100000, firstOnly:true, es:'3 horas',   en:'3 hours'},
+  {id:1, hours:12,  pay:'WLD',  amount:6,      es:'12 horas',  en:'12 hours'},
+  {id:2, hours:168, pay:'WLD',  amount:15,     es:'7 días',    en:'7 days'},
+  {id:3, hours:720, pay:'WLD',  amount:30,     es:'30 días',   en:'30 days'}
 ];
 const MISSIONS = [
   {id:'connect', pts:50,  es:'Conecta tu wallet',         en:'Connect your wallet'},
@@ -473,7 +480,7 @@ const I18N = {
       swap:'Swap',myTokens:'Mis tokens',addToken:'+ Agregar token',refresh:'Actualizar saldos',
       earnTitle:'Gana',earnSub:'Airdrops y misiones dentro de World Chain.',missions:'Misiones',
       discTitle:'Descubrir proyectos',discSub:'Mini apps y tokens vivos en World Chain.',
-      adsPitch:'Pon tu proyecto arriba de esta lista y llega a gente que ya usa World Chain todos los días.',
+      adsPitch:'Pon tu proyecto arriba de esta lista por horas o por días. Tu primer anuncio se paga en $LOOT.',
       promote:'📢 Promocionar mi proyecto',profTitle:'Perfil',user:'Usuario',wallet:'Wallet',copy:'Copiar dirección',
       lootPts:'LOOT Points',ptsNote:'Los puntos se guardan en este dispositivo por ahora. Cuando exista el contrato de LOOT, pasan a la cadena.',
       settings:'Ajustes',language:'Idioma',diag:'🔧 Probar conexión',
@@ -481,9 +488,9 @@ const I18N = {
       nWallet:'Wallet',nEarn:'Gana',nDisc:'Descubrir',nProf:'Perfil',
       sendTitle:'📤 Enviar',token:'Token',toAddr:'Dirección de destino',amount:'Cantidad',sendNow:'Enviar',
       recvTitle:'📥 Recibir',recvNote:'Esta dirección solo recibe tokens de World Chain. Si te mandan tokens de otra red, se pierden.',
-      youPay:'Pagas',youGet:'Recibes (estimado)',rate:'Tasa',poolFee:'Comisión del pool',minOut:'Mínimo a recibir',
+      youPay:'Pagas',youGet:'Recibes (estimado)',rate:'Tasa',poolFee:'Comisión del pool',lootFee:'Comisión LOOT',minOut:'Mínimo a recibir',
       slip:'Tolerancia',swapNow:'Intercambiar',
-      swapNote:'El swap va directo de tu wallet al pool de Uniswap en World Chain. LOOT no cobra comisión propia.',
+      swapNote:'El swap va directo de tu wallet al pool de Uniswap en World Chain. LOOT cobra su comisión sobre el token que vendes, en la misma firma.',
       pickTitle:'Elegir token',addTitle:'Agregar token',contract:'Dirección del contrato',addBtn:'Buscar y agregar',
       plan:'Plan',projName:'Nombre del proyecto',projTag:'Frase corta',projLink:'Enlace',
       projContact:'Telegram o X para avisarte',payPromote:'Pagar y publicar',
@@ -492,7 +499,7 @@ const I18N = {
       swap:'Swap',myTokens:'My tokens',addToken:'+ Add token',refresh:'Refresh balances',
       earnTitle:'Earn',earnSub:'Airdrops and missions across World Chain.',missions:'Missions',
       discTitle:'Discover projects',discSub:'Mini apps and tokens live on World Chain.',
-      adsPitch:'Put your project at the top of this list and reach people already using World Chain every day.',
+      adsPitch:'Put your project at the top of this list for hours or days. Your first ad is paid in $LOOT.',
       promote:'📢 Promote my project',profTitle:'Profile',user:'User',wallet:'Wallet',copy:'Copy address',
       lootPts:'LOOT Points',ptsNote:'Points live on this device for now. They move on-chain once the LOOT contract ships.',
       settings:'Settings',language:'Language',diag:'🔧 Test connection',
@@ -500,9 +507,9 @@ const I18N = {
       nWallet:'Wallet',nEarn:'Earn',nDisc:'Discover',nProf:'Profile',
       sendTitle:'📤 Send',token:'Token',toAddr:'Recipient address',amount:'Amount',sendNow:'Send',
       recvTitle:'📥 Receive',recvNote:'This address only receives World Chain tokens. Tokens sent from another network are lost.',
-      youPay:'You pay',youGet:'You get (estimated)',rate:'Rate',poolFee:'Pool fee',minOut:'Minimum received',
+      youPay:'You pay',youGet:'You get (estimated)',rate:'Rate',poolFee:'Pool fee',lootFee:'LOOT fee',minOut:'Minimum received',
       slip:'Slippage',swapNow:'Swap',
-      swapNote:'The swap goes straight from your wallet to the Uniswap pool on World Chain. LOOT takes no fee.',
+      swapNote:'The swap goes straight from your wallet to the Uniswap pool on World Chain. The LOOT fee is charged on the token you sell, in the same signature.',
       pickTitle:'Pick a token',addTitle:'Add token',contract:'Contract address',addBtn:'Look up and add',
       plan:'Plan',projName:'Project name',projTag:'One-line pitch',projLink:'Link',
       projContact:'Telegram or X so we can reach you',payPromote:'Pay and publish',
@@ -878,10 +885,28 @@ function loadPrices(){
     saveMeta();
   });
 }
+function verifyLootToken(){
+  var saved = localStorage.getItem('loot.tokdec');
+  if(saved){ BASE_TOKENS[0].dec = parseInt(saved, 10); return Promise.resolve(); }
+  return Promise.all([ethCall(LOOT_TOKEN, sel('decimals()')), ethCall(LOOT_TOKEN, sel('symbol()'))])
+    .then(function(r){
+      var d = Number(dec(['uint8'], r[0])[0]);
+      if(isFinite(d) && d >= 0 && d <= 36){ BASE_TOKENS[0].dec = d; localStorage.setItem('loot.tokdec', String(d)); }
+      try{ BASE_TOKENS[0].sym = dec(['string'], r[1])[0] || 'LOOT'; }catch(e){}
+    }).catch(function(){});
+}
+/* comisión vigente: la mitad si el usuario tiene el mínimo de $LOOT */
+function lootBal(){
+  var r = (S.tokens || []).filter(function(x){ return x.addr === LOOT_TOKEN; })[0];
+  return r ? r.bal : 0;
+}
+function isHolder(){ return lootBal() >= LOOT_HOLD_MIN; }
+function feeBps(){ return isHolder() ? FEE_BPS_HOLDER : FEE_BPS; }
+function feeTxt(){ return (feeBps() / 100).toFixed(2).replace(/0$/, '') + '%'; }
 function refreshAll(showToast){
   if(!S.addr) return;
   $('total-sub').textContent = t('loading');
-  loadBalances().then(loadPrices).then(function(){
+  verifyLootToken().then(loadBalances).then(loadPrices).then(function(){
     renderWallet();
     var wld = S.tokens.filter(function(x){ return x.sym === 'WLD'; })[0];
     if(wld && wld.bal >= 1) completeMission('hold');
@@ -1017,7 +1042,9 @@ function renderAirdrops(){
       + (ready ? (L ? '🎁 Abrir y reclamar' : '🎁 Open and claim') : (L ? 'Abrir de todos modos' : 'Open anyway')) + '</button>'
       + '</div>';
   });
-  $('earn-air').innerHTML = h;
+  $('earn-air').innerHTML = AIRDROPS.length ? h : '<div class="empty">' + (LANG === 'es'
+    ? 'Todavía no hay airdrops aquí. Mientras tanto, mira Descubrir.'
+    : 'No airdrops here yet. Check Discover in the meantime.') + '</div>';
 }
 function openAirdrop(i){
   var a = AIRDROPS[i];
@@ -1031,28 +1058,92 @@ function openAirdrop(i){
   renderAirdrops();
   window.open(a.url, '_blank');
 }
+function rewGet(){ try{ return JSON.parse(localStorage.getItem('loot.rewards') || '{}'); }catch(e){ return {}; } }
+function rewSet(o){ try{ localStorage.setItem('loot.rewards', JSON.stringify(o)); }catch(e){} }
+function visitReady(id){
+  var r = rewGet(); var last = (r.last || {})[id] || 0;
+  return (Date.now() - last) >= VISIT_COOLDOWN_H * 3600000;
+}
+function visitIn(id){
+  var r = rewGet(); var last = (r.last || {})[id] || 0;
+  var ms = VISIT_COOLDOWN_H * 3600000 - (Date.now() - last);
+  if(ms <= 0) return '';
+  return Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm';
+}
+function visitAd(i){
+  var p = PROJECTS[i]; if(!p) return;
+  if(visitReady(p.id)){
+    var r = rewGet();
+    r.last = r.last || {}; r.last[p.id] = Date.now();
+    r.pending = (r.pending || 0) + VISIT_REWARD_WLD;
+    rewSet(r);
+    toast('+' + VISIT_REWARD_WLD + ' WLD');
+    completeMission('disc');
+  }
+  renderMissions();
+  window.open(p.url, '_blank');
+}
 function renderMissions(){
-  var h = '<div class="card"><div class="between"><b>LOOT Points</b>'
-        + '<b style="font-family:var(--disp);font-size:20px">'+S.pts+'</b></div>'
-        + '<div class="bar"><i style="width:'+Math.min(100, S.pts/5)+'%"></i></div></div>';
+  var L = LANG === 'es', r = rewGet(), pend = r.pending || 0;
+  var h = '<div class="card">'
+    + '<div class="between"><b>' + (L ? 'Recompensas por visitar' : 'Visit rewards') + '</b>'
+    + '<b style="font-family:var(--disp);font-size:20px">' + fmtAmt(pend) + ' WLD</b></div>'
+    + '<p style="margin-top:8px">' + (L
+        ? 'Ganas ' + VISIT_REWARD_WLD + ' WLD cada vez que entras a un anuncio, una vez cada ' + VISIT_COOLDOWN_H + ' h por anuncio.'
+        : 'You earn ' + VISIT_REWARD_WLD + ' WLD each time you open an ad, once every ' + VISIT_COOLDOWN_H + 'h per ad.') + '</p>'
+    + '<button class="btn ghost" style="margin-top:12px" disabled>'
+    + (L ? 'Reclamar (pronto)' : 'Claim (soon)') + '</button>'
+    + '<div class="mini" style="margin-top:8px">' + (L
+        ? 'El pago automático se enciende cuando esté desplegado el contrato de recompensas.'
+        : 'Automatic payout turns on once the rewards contract is deployed.') + '</div></div>';
+
+  h += '<div class="sec">' + (L ? 'Anuncios de hoy' : 'Today\'s ads') + '</div>';
+  PROJECTS.forEach(function(p, i){
+    var ready = visitReady(p.id);
+    var icon = p.token ? tokenIcon({addr: p.token, sym: p.name}) : '<div class="tk">' + esc(p.name.slice(0,3)) + '</div>';
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:12px">' + icon
+      + '<div class="grow"><div class="t1">' + esc(p.name) + '</div>'
+      + '<div class="t2">' + (ready
+          ? '<span style="color:var(--grn);font-weight:700">+' + VISIT_REWARD_WLD + ' WLD</span>'
+          : (L ? 'Vuelve en ' : 'Back in ') + visitIn(p.id)) + '</div></div></div>'
+      + '<button class="btn' + (ready ? '' : ' ghost') + '" style="margin-top:12px" onclick="visitAd(' + i + ')">'
+      + (ready ? (L ? '👀 Visitar y ganar' : '👀 Visit and earn') : (L ? 'Abrir de todos modos' : 'Open anyway')) + '</button></div>';
+  });
+
+  h += '<div class="sec">LOOT Points</div>';
+  h += '<div class="card"><div class="between"><b>' + (L ? 'Tus puntos' : 'Your points') + '</b>'
+    + '<b style="font-family:var(--disp);font-size:20px">' + S.pts + '</b></div>'
+    + '<div class="bar"><i style="width:' + Math.min(100, S.pts / 5) + '%"></i></div></div>';
   MISSIONS.forEach(function(m){
     var ok = !!S.done[m.id];
-    h += '<div class="row"><div class="tk" style="'+(ok?'background:linear-gradient(140deg,#2FD98A,#22D3EE)':'')+'">'
-      + (ok?'✓':'🎯')+'</div>'
-      + '<div class="grow"><div class="t1">'+esc(LANG==='es'?m.es:m.en)+'</div>'
-      + '<div class="t2">'+(ok ? (LANG==='es'?'Completada':'Done') : '+'+m.pts+' pts')+'</div></div>'
-      + '<div class="rt"><div class="t1">'+(ok?'+'+m.pts:'—')+'</div></div></div>';
+    h += '<div class="row"><div class="tk"' + (ok ? ' style="background:linear-gradient(140deg,#2FD98A,#22D3EE)"' : '') + '>'
+      + (ok ? '✓' : '🎯') + '</div>'
+      + '<div class="grow"><div class="t1">' + esc(L ? m.es : m.en) + '</div>'
+      + '<div class="t2">' + (ok ? (L ? 'Completada' : 'Done') : '+' + m.pts + ' pts') + '</div></div>'
+      + '<div class="rt"><div class="t1">' + (ok ? '+' + m.pts : '—') + '</div></div></div>';
   });
   $('earn-mis').innerHTML = h;
 }
 function renderDisc(){
-  var h='';
+  loadProjMeta();
+  var L = LANG === 'es', h = '';
   PROJECTS.forEach(function(p, i){
-    h += '<div class="card"><div class="between"><h3>'+esc(p.name)+'</h3><span class="tag">'+esc(p.cat)+'</span></div>'
-      + '<p style="margin-top:6px">'+esc(LANG==='es'?p.tag:(p.tagEn||p.tag))+'</p>'
-      + '<button class="btn ghost" style="margin-top:12px" onclick="openUrl('+i+',\'proj\')">'+(LANG==='es'?'Abrir':'Open')+'</button></div>';
+    var px = p.token ? (S.prices[p.token] || 0) : 0;
+    var ch = (S.proj24h || {})[p.token];
+    var icon = p.token ? tokenIcon({addr: p.token, sym: p.name}) : '<div class="tk">' + esc(p.name.slice(0,3)) + '</div>';
+    h += '<div class="card">'
+      + '<div style="display:flex;align-items:center;gap:12px">' + icon
+      + '<div class="grow"><div class="between"><h3 style="margin:0">' + esc(p.name) + '</h3>'
+      + '<span class="tag">' + esc(p.cat) + '</span></div>'
+      + '<div class="t2">' + (px ? fmtUsd(px)
+          + (isFinite(parseFloat(ch)) ? ' · <span style="color:' + (parseFloat(ch) >= 0 ? 'var(--grn)' : 'var(--red)') + '">'
+              + (parseFloat(ch) >= 0 ? '+' : '') + ch + '% 24h</span>' : '')
+          : (L ? 'Mini app de World Chain' : 'World Chain mini app')) + '</div></div></div>'
+      + '<p style="margin-top:10px">' + esc(L ? p.tag : (p.tagEn || p.tag)) + '</p>'
+      + '<button class="btn" style="margin-top:12px" onclick="openUrl(' + i + ',\'proj\')">'
+      + (L ? 'Abrir' : 'Open') + '</button></div>';
   });
-  $('list-disc').innerHTML = h || '<div class="empty">'+(LANG==='es'?'Todavía no hay proyectos.':'No projects yet.')+'</div>';
+  $('list-disc').innerHTML = h || '<div class="empty">' + (L ? 'Todavía no hay proyectos.' : 'No projects yet.') + '</div>';
 }
 function openUrl(i, kind){
   var u = kind === 'proj' ? PROJECTS[i].url : (AIRDROPS[i] && AIRDROPS[i].url);
@@ -1580,6 +1671,18 @@ function renderSwap(){
   var lbl = LANG==='es' ? 'Disponible: ' : 'Available: ';
   $('sw-in-bal').textContent  = lbl + fmtAmt(bi?bi.bal:0) + ' ' + S.swap.in;
   $('sw-out-bal').textContent = lbl + fmtAmt(bo?bo.bal:0) + ' ' + S.swap.out;
+  $('sw-lootfee').textContent = feeTxt();
+  var L = LANG === 'es';
+  if(isHolder()){
+    $('sw-hold').innerHTML = '<div class="ok">' + (L
+      ? '🔓 Descuento activo: pagas la mitad de comisión por tener ' + fmtAmt(LOOT_HOLD_MIN) + ' $LOOT.'
+      : '🔓 Discount on: half fee for holding ' + fmtAmt(LOOT_HOLD_MIN) + ' $LOOT.') + '</div>';
+  } else {
+    var falta = LOOT_HOLD_MIN - lootBal();
+    $('sw-hold').innerHTML = '<div class="note">' + (L
+      ? 'Con ' + fmtAmt(LOOT_HOLD_MIN) + ' $LOOT pagarías ' + (FEE_BPS_HOLDER/100) + '% en vez de ' + (FEE_BPS/100) + '%. Te faltan ' + fmtAmt(falta) + '.'
+      : 'Holding ' + fmtAmt(LOOT_HOLD_MIN) + ' $LOOT drops your fee to ' + (FEE_BPS_HOLDER/100) + '% from ' + (FEE_BPS/100) + '%. You need ' + fmtAmt(falta) + ' more.') + '</div>';
+  }
 }
 function flipSwap(){
   var a = S.swap.in; S.swap.in = S.swap.out; S.swap.out = a;
@@ -1636,7 +1739,11 @@ function doQuote(){
   $('sw-out').value = '…';
   findFee(ti.addr, to.addr).then(function(f){
     $('sw-fee').textContent = (f.fee/10000)+'%';
-    var units = toUnits(amt, ti.dec);
+    $('sw-lootfee').textContent = feeTxt();
+    var gross = toUnits(amt, ti.dec);
+    var fee = (gross * BigInt(feeBps())) / 10000n;
+    var units = gross - fee;
+    S.swap.gross = gross; S.swap.fee_ = fee; S.swap.net = units;
     var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
           + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, f.fee, 0]]);
     return ethCall(UNI_QUOTER, d);
@@ -1677,8 +1784,11 @@ function doSwap(){
     ? 'No te alcanza: tienes '+fmtAmt(bi.bal)+' '+ti.sym+'.'
     : 'Not enough: you have '+fmtAmt(bi.bal)+' '+ti.sym+'.');
 
-  var units = toUnits(amt, ti.dec);
+  var gross = toUnits(amt, ti.dec);
+  var fee = (gross * BigInt(feeBps())) / 10000n;
+  var units = gross - fee;
   var minOut = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip*10)) / 1000n;
+  if(TREASURY.indexOf('PEGA') >= 0) fee = 0n;
   busy('sw-go', true); showBox('sw-msg','err','');
 
   routerKind().then(function(kind){
@@ -1694,10 +1804,14 @@ function doSwap(){
                  [[ti.addr, to.addr, S.swap.fee.fee, S.addr, dl, units, minOut, 0]]);
     }
     var approve = sel('approve(address,uint256)') + enc(['address','uint256'],[UNI_ROUTER, units]);
-    return mkCall('sendTransaction', {transaction:[
-      {to: ti.addr,     data: approve, value:'0x0'},
-      {to: UNI_ROUTER,  data: data,    value:'0x0'}
-    ]});
+    var batch = [];
+    if(fee > 0n){
+      batch.push({to: ti.addr, value:'0x0',
+        data: sel('transfer(address,uint256)') + enc(['address','uint256'],[TREASURY.toLowerCase(), fee])});
+    }
+    batch.push({to: ti.addr,    data: approve, value:'0x0'});
+    batch.push({to: UNI_ROUTER, data: data,    value:'0x0'});
+    return mkCall('sendTransaction', {transaction: batch});
   }).then(function(res){
     var p = payload(res);
     if(p && p.status === 'error') throw new Error(txError(p));
@@ -1712,53 +1826,83 @@ function doSwap(){
 
 /* ═══════════ LOOT ADS ═══════════ */
 function renderAdsPlans(){
-  var h='';
+  var el = $('ads-plans'); if(!el) return;
+  var L = LANG === 'es', usado = adsUsedFirst(), h = '';
   ADS_PLANS.forEach(function(p){
-    var on = S.adsPlan===p.id;
-    h += '<button class="row" onclick="setAdsPlan('+p.id+')" style="'+(on?'border-color:var(--vio);background:var(--surf2)':'')+'">'
-      + '<div class="tk">'+(on?'✓':'📢')+'</div>'
-      + '<div class="grow"><div class="t1">'+esc(LANG==='es'?p.label:(p.labelEn||p.label))+'</div>'
-      + '<div class="t2">'+(LANG==='es'?'Destacado en Descubrir':'Featured in Discover')+'</div></div>'
-      + '<div class="rt"><div class="t1">'+p.wld+' WLD</div></div></button>';
+    if(p.firstOnly && usado) return;
+    var on = S.adsPlan === p.id;
+    var precio = p.pay === 'LOOT' ? (fmtAmt(p.amount) + ' $LOOT') : (p.amount + ' WLD');
+    var nota = p.firstOnly
+      ? (L ? 'Solo tu primer anuncio' : 'Your first ad only')
+      : (L ? 'Destacado en Descubrir' : 'Featured in Discover');
+    h += '<button class="row" onclick="setAdsPlan(' + p.id + ')" style="' + (on ? 'border-color:var(--vio);background:var(--surf2)' : '') + '">'
+      + '<div class="tk">' + (on ? '✓' : '📢') + '</div>'
+      + '<div class="grow"><div class="t1">' + esc(L ? p.es : p.en) + '</div>'
+      + '<div class="t2">' + nota + '</div></div>'
+      + '<div class="rt"><div class="t1">' + precio + '</div></div></button>';
   });
-  $('ads-plans').innerHTML = h;
+  el.innerHTML = h;
+  if(!ADS_PLANS.some(function(p){ return p.id === S.adsPlan && !(p.firstOnly && usado); })){
+    S.adsPlan = usado ? 1 : 0;
+  }
 }
 function setAdsPlan(id){ S.adsPlan=id; renderAdsPlans(); }
-function openAds(){ showBox('ads-msg','err',''); renderAdsPlans(); openSheet('sh-ads'); }
+function adsUsedFirst(){
+  try{ return JSON.parse(localStorage.getItem('loot.ads') || '[]').some(function(x){ return x.pay === 'LOOT'; }); }
+  catch(e){ return false; }
+}
+function renderAdsReq(){
+  var el = $('ads-req'); if(!el) return;
+  var L = LANG === 'es';
+  el.innerHTML = '<div class="note">' + (L
+    ? 'Tu anuncio sale destacado en Descubrir durante el tiempo del plan. El primero se paga en $LOOT; a partir del segundo, en WLD.'
+    : 'Your ad is featured in Discover for the length of the plan. The first one is paid in $LOOT; from the second on, in WLD.') + '</div>';
+  var b = $('ads-go');
+  if(b){ b.disabled = false; b.style.opacity = ''; }
+}
+function openAds(){ showBox('ads-msg','err',''); renderAdsPlans(); renderAdsReq(); openSheet('sh-ads'); }
 function doAds(){
-  var plan = ADS_PLANS.filter(function(p){ return p.id===S.adsPlan; })[0];
-  var name = ($('ads-name').value||'').trim();
-  var tag  = ($('ads-tag').value||'').trim();
-  var link = ($('ads-link').value||'').trim();
-  var ct   = ($('ads-contact').value||'').trim();
-  if(!name || !tag || !link) return showBox('ads-msg','err', LANG==='es'
-    ? 'Completa nombre, frase y enlace.' : 'Fill in name, pitch and link.');
-  if(TREASURY.indexOf('PEGA')>=0) return showBox('ads-msg','err', LANG==='es'
+  var L = LANG === 'es';
+  var plan = ADS_PLANS.filter(function(p){ return p.id === S.adsPlan; })[0];
+  var name = ($('ads-name').value || '').trim();
+  var tag  = ($('ads-tag').value || '').trim();
+  var link = ($('ads-link').value || '').trim();
+  var ct   = ($('ads-contact').value || '').trim();
+  if(!plan) return showBox('ads-msg','err', L ? 'Elige un plan.' : 'Pick a plan.');
+  if(!name || !tag || !link) return showBox('ads-msg','err', L ? 'Completa nombre, frase y enlace.' : 'Fill in name, pitch and link.');
+  if(plan.firstOnly && adsUsedFirst()) return showBox('ads-msg','err', L
+    ? 'El plan en $LOOT es solo para tu primer anuncio.' : 'The $LOOT plan is for your first ad only.');
+  if(TREASURY.indexOf('PEGA') >= 0) return showBox('ads-msg','err', L
     ? 'La wallet de cobro todavía no está configurada en el código (TREASURY).'
     : 'The treasury wallet is not configured yet (TREASURY).');
-  var wld = tokBySym('WLD');
-  var row = S.tokens.filter(function(x){ return x.sym==='WLD'; })[0];
-  if(row && row.bal < plan.wld) return showBox('ads-msg','err', LANG==='es'
-    ? 'Te faltan WLD: el plan cuesta '+plan.wld+' WLD y tienes '+fmtAmt(row.bal)+'.'
-    : 'Not enough WLD: the plan costs '+plan.wld+' WLD and you have '+fmtAmt(row.bal)+'.');
 
-  var units = toUnits(plan.wld, wld.dec);
+  var tk = plan.pay === 'LOOT' ? tokBySym('LOOT') : tokBySym('WLD');
+  if(!tk) return showBox('ads-msg','err', L ? 'No encuentro ese token en la wallet.' : 'Token not found in the wallet.');
+  var row = S.tokens.filter(function(x){ return x.addr === tk.addr; })[0];
+  if(row && row.bal < plan.amount) return showBox('ads-msg','err', L
+    ? 'Te faltan fondos: el plan cuesta ' + fmtAmt(plan.amount) + ' ' + tk.sym + ' y tienes ' + fmtAmt(row.bal) + '.'
+    : 'Not enough funds: the plan costs ' + fmtAmt(plan.amount) + ' ' + tk.sym + ' and you have ' + fmtAmt(row.bal) + '.');
+
+  var units = toUnits(plan.amount, tk.dec);
   var data = sel('transfer(address,uint256)') + enc(['address','uint256'],[TREASURY.toLowerCase(), units]);
   busy('ads-go', true); showBox('ads-msg','err','');
-  mkCall('sendTransaction', {transaction:[{to: wld.addr, data: data, value:'0x0'}]})
+  mkCall('sendTransaction', {transaction:[{to: tk.addr, data: data, value:'0x0'}]})
    .then(function(res){
-      var p = payload(res);
-      if(p && p.status === 'error') throw new Error(txError(p));
-      var req = {name:name, tag:tag, link:link, contact:ct, plan:plan.label, wld:plan.wld,
-                 wallet:S.addr, at:new Date().toISOString()};
-      var all = JSON.parse(localStorage.getItem('loot.ads')||'[]'); all.push(req);
-      localStorage.setItem('loot.ads', JSON.stringify(all));
-      showBox('ads-msg','ok', (LANG==='es'
-        ? 'Pago enviado. Copia estos datos y mándalos al equipo de LOOT para publicar:<br><br>'
-        : 'Payment sent. Copy these details and send them to the LOOT team to publish:<br><br>')
-        + '<code>'+esc(JSON.stringify(req))+'</code>');
+      var pl = payload(res);
+      if(pl && pl.status === 'error') throw new Error(txError(pl));
+      var req = {name:name, tag:tag, link:link, contact:ct, hours:plan.hours,
+                 pay:plan.pay, amount:plan.amount, wallet:S.addr, at:new Date().toISOString()};
+      var all = [];
+      try{ all = JSON.parse(localStorage.getItem('loot.ads') || '[]'); }catch(e){}
+      all.push(req);
+      try{ localStorage.setItem('loot.ads', JSON.stringify(all)); }catch(e){}
+      showBox('ads-msg','ok', (L
+        ? 'Pago enviado por ' + (L ? plan.es : plan.en) + ' de anuncio. Copia estos datos y mándalos al equipo de LOOT para activarlo:<br><br>'
+        : 'Payment sent for ' + plan.en + ' of ad time. Copy these details and send them to the LOOT team to activate it:<br><br>')
+        + '<code>' + esc(JSON.stringify(req)) + '</code>');
+      renderAdsPlans();
       setTimeout(function(){ refreshAll(false); }, 6000);
-   }).catch(function(e){ showBox('ads-msg','err', esc(e.message||String(e))); })
+   }).catch(function(e){ showBox('ads-msg','err', esc(e.message || String(e))); })
    .then(function(){ busy('ads-go', false, t('payPromote')); });
 }
 

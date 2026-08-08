@@ -164,6 +164,9 @@ textarea.inp{min-height:78px;resize:vertical}
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.25);border-top-color:var(--cy);
   border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
+canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;background:var(--surf)}
+.soc{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.soc button{padding:10px 14px;border-radius:12px;background:var(--surf);border:1px solid var(--line);font-size:13px;font-weight:600}
 .mini{font-size:11px;color:var(--mut)}
 </style>
 </head>
@@ -372,6 +375,30 @@ textarea.inp{min-height:78px;resize:vertical}
   <div class="note" data-i18n="adsNote">Versión inicial: el pago va a la tesorería de LOOT y la publicación se revisa a mano antes de salir en Descubrir. Cuando esté el contrato de anuncios, será automático.</div>
 </div></div>
 
+<div class="sheet hidden" id="sh-tok"><div>
+  <div class="sh-top"><h3 id="tk-title">—</h3><button class="x" onclick="closeSheet('sh-tok')">✕</button></div>
+  <div class="between">
+    <div><div id="tk-price" style="font-family:var(--disp);font-weight:700;font-size:30px">—</div>
+    <div class="mini" id="tk-sub">—</div></div>
+    <div id="tk-ico"></div>
+  </div>
+  <div class="pills" style="margin-top:14px">
+    <button class="pill on" id="rg-24h" onclick="setRange('24h')">24H</button>
+    <button class="pill" id="rg-7d" onclick="setRange('7d')">7D</button>
+    <button class="pill" id="rg-30d" onclick="setRange('30d')">30D</button>
+  </div>
+  <canvas id="tk-chart"></canvas>
+  <div class="mini" id="tk-chartmsg" style="margin-top:8px"></div>
+  <div class="card" id="tk-stats" style="margin-top:12px"></div>
+  <div id="tk-social"></div>
+  <div style="display:flex;gap:10px;margin-top:14px">
+    <button class="btn" style="flex:1" onclick="swapFromToken()">💱 Swap</button>
+    <button class="btn ghost" style="flex:1" onclick="sendFromToken()">📤 <span data-i18n="send">Enviar</span></button>
+  </div>
+  <div class="addrbox" id="tk-addr" style="margin-top:12px">—</div>
+  <button class="btn ghost" style="margin-top:10px" onclick="copyTok()" data-i18n="copyContract">Copiar contrato</button>
+</div></div>
+
 <div id="toast" class="hidden"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
@@ -381,7 +408,7 @@ textarea.inp{min-height:78px;resize:vertical}
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b6';
+const BUILD = 'LW b9';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -448,7 +475,7 @@ const I18N = {
       pickTitle:'Elegir token',addTitle:'Agregar token',contract:'Dirección del contrato',addBtn:'Buscar y agregar',
       plan:'Plan',projName:'Nombre del proyecto',projTag:'Frase corta',projLink:'Enlace',
       projContact:'Telegram o X para avisarte',payPromote:'Pagar y publicar',
-      adsNote:'Versión inicial: el pago va a la tesorería de LOOT y la publicación se revisa a mano antes de salir en Descubrir. Cuando esté el contrato de anuncios, será automático.'},
+      copyContract:'Copiar contrato',adsNote:'Versión inicial: el pago va a la tesorería de LOOT y la publicación se revisa a mano antes de salir en Descubrir. Cuando esté el contrato de anuncios, será automático.'},
   en:{connect:'Connect wallet',totalBal:'Total balance',loading:'Loading…',send:'Send',receive:'Receive',
       swap:'Swap',myTokens:'My tokens',addToken:'+ Add token',refresh:'Refresh balances',
       earnTitle:'Earn',earnSub:'Airdrops and missions across World Chain.',missions:'Missions',
@@ -467,7 +494,7 @@ const I18N = {
       pickTitle:'Pick a token',addTitle:'Add token',contract:'Contract address',addBtn:'Look up and add',
       plan:'Plan',projName:'Project name',projTag:'One-line pitch',projLink:'Link',
       projContact:'Telegram or X so we can reach you',payPromote:'Pay and publish',
-      adsNote:'First version: payment goes to the LOOT treasury and each listing is reviewed by hand before it shows in Discover. It becomes automatic once the ads contract ships.'}
+      copyContract:'Copy contract',adsNote:'First version: payment goes to the LOOT treasury and each listing is reviewed by hand before it shows in Discover. It becomes automatic once the ads contract ships.'}
 };
 let LANG = (localStorage.getItem('loot.lang')) || ((navigator.language||'en').toLowerCase().startsWith('es') ? 'es' : 'en');
 function t(k){ return (I18N[LANG] && I18N[LANG][k]) || (I18N.es[k]) || k; }
@@ -666,7 +693,10 @@ function customTokens(){
   try{ return JSON.parse(localStorage.getItem('loot.custom')||'[]'); }catch(e){ return []; }
 }
 function allTokens(){ return BASE_TOKENS.concat(customTokens()); }
-function tokBySym(sym){ return allTokens().filter(function(t){ return t.sym===sym; })[0]; }
+function tokBySym(sym){
+  var held = (S.tokens || []).filter(function(t){ return t.sym === sym && t.addr !== 'native'; })[0];
+  return held || allTokens().filter(function(t){ return t.sym === sym; })[0];
+}
 
 /* ═══════════ navegación ═══════════ */
 function go(v){
@@ -883,10 +913,10 @@ function renderWallet(){
     else if(r.px && wldUsd) sub = fmtUsd(r.px) + ' · ' + fmtAmt(r.px / wldUsd) + ' WLD';
     else if(r.px) sub = fmtUsd(r.px);
     else sub = esc(r.name);
-    html += '<div class="row">' + tokenIcon(r)
+    html += '<button class="row" onclick="openToken(\'' + esc(r.addr) + '\')">' + tokenIcon(r)
       + '<div class="grow"><div class="t1">' + esc(r.sym) + '</div><div class="t2">' + sub + '</div></div>'
       + '<div class="rt"><div class="t1">' + fmtAmt(r.bal) + '</div>'
-      + '<div class="t2">' + (r.px ? fmtUsd(r.usd) : '—') + '</div></div></div>';
+      + '<div class="t2">' + (r.px ? fmtUsd(r.usd) : '—') + '</div></div></button>';
   });
   if(S.discErr){
     html += '<div class="note">' + (LANG === 'es'
@@ -965,6 +995,286 @@ function renderProfile(){
 }
 function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Address copied'); }
 
+/* ═══════════ ficha del token ═══════════ */
+const GT = 'https://api.geckoterminal.com/api/v2';
+/* fetch con tope de 12 s: sin esto una API que no responde deja la ficha en "Cargando…" para siempre */
+function jget(url, ms){
+  ms = ms || 12000;
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var to = setTimeout(function(){ if(ctrl) ctrl.abort(); }, ms);
+  var host = url.split('/')[2] || url;
+  return fetch(url, ctrl ? {signal: ctrl.signal} : {}).then(function(r){
+    clearTimeout(to);
+    if(!r.ok) throw new Error(host + ' → ' + r.status);
+    return r.json();
+  }, function(e){
+    clearTimeout(to);
+    throw new Error(host + ' → ' + ((e && e.name === 'AbortError') ? 'sin respuesta en 12 s' : (e.message || 'falla')));
+  });
+}
+var TOK = {addr:'', mkt:'', sym:'', name:'', bal:0, px:0, pair:'', range:'24h', pts:[]};
+function openToken(addr){
+  var weth = tokBySym('WETH');
+  var r = S.tokens.filter(function(x){ return x.addr === addr; })[0]
+       || (addr === 'native' ? {sym:'ETH', name:'Ether', addr:'native', dec:18, bal:S.eth} : null);
+  if(!r) return;
+  TOK = {addr: addr, mkt: (addr === 'native' && weth) ? weth.addr : addr, sym: r.sym, name: r.name,
+         bal: r.bal, px: S.prices[addr] || r.px || 0, pair:'', range: TOK.range || '24h', pts: []};
+  $('tk-title').textContent = r.sym;
+  $('tk-ico').innerHTML = tokenIcon({addr: TOK.mkt, sym: r.sym});
+  $('tk-price').textContent = TOK.px ? fmtUsd(TOK.px) : '—';
+  $('tk-sub').textContent = esc(r.name) + ' · ' + fmtAmt(r.bal) + ' ' + r.sym;
+  $('tk-addr').textContent = addr === 'native' ? (LANG === 'es' ? 'Moneda nativa de la red' : 'Native coin') : addr;
+  var L0 = LANG === 'es';
+  $('tk-stats').innerHTML =
+      kv(L0 ? 'Tu saldo' : 'Your balance', fmtAmt(TOK.bal) + ' ' + esc(TOK.sym))
+    + kv(L0 ? 'Valor' : 'Value', TOK.px ? fmtUsd(TOK.bal * TOK.px) : '—')
+    + '<div class="mini" style="margin-top:8px"><span class="spin"></span> '
+    + (L0 ? 'Buscando datos de mercado…' : 'Loading market data…') + '</div>';
+  $('tk-social').innerHTML = '';
+  $('tk-chartmsg').textContent = '';
+  clearChart();
+  openSheet('sh-tok');
+  loadTokenMarket();
+}
+function fmtBig(n){
+  n = Number(n);
+  if(!isFinite(n) || n === 0) return '—';
+  if(n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if(n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if(n >= 1e3) return (n/1e3).toFixed(2) + 'K';
+  return fmtAmt(n);
+}
+function chg(v){
+  v = parseFloat(v);
+  if(!isFinite(v)) return '<b>—</b>';
+  return '<b style="color:' + (v >= 0 ? 'var(--grn)' : 'var(--red)') + '">' + (v >= 0 ? '+' : '') + v + '%</b>';
+}
+function kv(k, v){ return '<div class="kv"><span>' + k + '</span><b>' + v + '</b></div>'; }
+function loadTokenMarket(){
+  var a = TOK.mkt, L = LANG === 'es';
+  var errs = [];
+  var dexP = jget('https://api.dexscreener.com/latest/dex/tokens/' + a)
+    .then(function(j){
+      var pairs = ((j && j.pairs) || []).filter(function(x){ return x.chainId === 'worldchain'; });
+      if(!pairs.length) return null;
+      pairs.sort(function(x, y){ return ((y.liquidity && y.liquidity.usd) || 0) - ((x.liquidity && x.liquidity.usd) || 0); });
+      return {top: pairs[0], count: pairs.length};
+    }).catch(function(e){ errs.push('DexScreener: ' + e.message); return null; });
+
+  var gtP = jget(GT + '/networks/world-chain/tokens/' + a)
+    .then(function(j){ return (j && j.data && j.data.attributes) || null; })
+    .catch(function(e){ errs.push('GeckoTerminal: ' + e.message); return null; });
+
+  var bsP = jget(EXPLORER + '/api/v2/tokens/' + a)
+    .then(function(j){ return j || null; })
+    .catch(function(e){ errs.push('Explorador: ' + e.message); return null; });
+
+  Promise.all([dexP, gtP, bsP]).then(function(o){
+   try{
+    var d = o[0], gt = o[1], bs = o[2];
+    var p = d && d.top;
+    var wldT = tokBySym('WLD');
+    var wldUsd = (wldT && S.prices[wldT.addr]) || 0;
+    var px = (p && parseFloat(p.priceUsd)) || (gt && parseFloat(gt.price_usd)) || TOK.px || 0;
+    TOK.px = px;
+    TOK.pair = p ? String(p.pairAddress || '').toLowerCase() : '';
+
+    $('tk-price').textContent = px ? fmtUsd(px) : '—';
+    var h24 = p && p.priceChange && p.priceChange.h24;
+    $('tk-sub').innerHTML = (px && wldUsd ? fmtAmt(px / wldUsd) + ' WLD' : '')
+      + (isFinite(parseFloat(h24)) ? ' · ' + chg(h24).replace('<b','<span').replace('</b>','</span>') + ' 24h' : '');
+
+    if(!p && !gt){
+      $('tk-stats').innerHTML =
+          kv(L ? 'Tu saldo' : 'Your balance', fmtAmt(TOK.bal) + ' ' + esc(TOK.sym))
+        + '<div class="mini" style="margin-top:8px">' + (L
+            ? 'Este token todavía no tiene mercado en World Chain, así que no hay precio ni gráfico.'
+            : 'This token has no market on World Chain yet, so there is no price or chart.') + '</div>'
+        + (errs.length ? '<div class="mini" style="margin-top:8px;opacity:.7">' + esc(errs.join(' · ')) + '</div>' : '');
+      renderSocials(p); $('tk-chartmsg').textContent = ''; return;
+    }
+
+    var mc  = (p && p.marketCap) || (gt && gt.market_cap_usd) || (bs && bs.circulating_market_cap) || 0;
+    var fdv = (p && p.fdv) || (gt && gt.fdv_usd) || 0;
+    var liq = (p && p.liquidity && p.liquidity.usd) || (gt && gt.total_reserve_in_usd) || 0;
+    var vol = (p && p.volume && p.volume.h24) || (gt && gt.volume_usd && gt.volume_usd.h24) || 0;
+    var tx  = (p && p.txns && p.txns.h24) || null;
+    var supply = 0;
+    if(bs && bs.total_supply){ supply = Number(bs.total_supply) / Math.pow(10, Number(bs.decimals || 18)); }
+    else if(gt && gt.total_supply){ supply = Number(gt.total_supply) / Math.pow(10, Number(gt.decimals || 18)); }
+
+    var html = '';
+    html += '<div class="sec" style="margin:0 0 6px">' + (L ? 'Mercado' : 'Market') + '</div>';
+    html += kv(L ? 'Precio' : 'Price', px ? fmtUsd(px) : '—');
+    if(wldUsd && px) html += kv(L ? 'Precio en WLD' : 'Price in WLD', fmtAmt(px / wldUsd) + ' WLD');
+    html += kv(L ? 'Capitalización (MC)' : 'Market cap', mc ? fmtUsd(mc) : '—');
+    html += kv('FDV', fdv ? fmtUsd(fdv) : '—');
+    html += kv(L ? 'Liquidez' : 'Liquidity', liq ? fmtUsd(liq) : '—');
+    html += kv(L ? 'Volumen 24 h' : '24h volume', vol ? fmtUsd(vol) : '—');
+
+    if(p && p.priceChange){
+      html += '<div class="sec" style="margin:14px 0 6px">' + (L ? 'Variación' : 'Change') + '</div>';
+      html += '<div class="kv"><span>5m</span>' + chg(p.priceChange.m5) + '</div>';
+      html += '<div class="kv"><span>1h</span>' + chg(p.priceChange.h1) + '</div>';
+      html += '<div class="kv"><span>6h</span>' + chg(p.priceChange.h6) + '</div>';
+      html += '<div class="kv"><span>24h</span>' + chg(p.priceChange.h24) + '</div>';
+    }
+    if(tx){
+      html += '<div class="sec" style="margin:14px 0 6px">' + (L ? 'Actividad 24 h' : '24h activity') + '</div>';
+      html += '<div class="kv"><span>' + (L ? 'Compras' : 'Buys') + '</span><b style="color:var(--grn)">' + (tx.buys || 0) + '</b></div>';
+      html += '<div class="kv"><span>' + (L ? 'Ventas' : 'Sells') + '</span><b style="color:var(--red)">' + (tx.sells || 0) + '</b></div>';
+    }
+
+    html += '<div class="sec" style="margin:14px 0 6px">Token</div>';
+    html += kv(L ? 'Tu saldo' : 'Your balance', fmtAmt(TOK.bal) + ' ' + esc(TOK.sym));
+    html += kv(L ? 'Valor de tu saldo' : 'Your value', px ? fmtUsd(TOK.bal * px) : '—');
+    if(supply) html += kv(L ? 'Suministro total' : 'Total supply', fmtBig(supply) + ' ' + esc(TOK.sym));
+    if(bs && bs.holders) html += kv(L ? 'Poseedores' : 'Holders', fmtBig(bs.holders));
+    if(p){
+      html += kv(L ? 'Par principal' : 'Main pair',
+        esc((p.baseToken && p.baseToken.symbol) || '') + '/' + esc((p.quoteToken && p.quoteToken.symbol) || ''));
+      if(p.dexId) html += kv('DEX', esc(p.dexId));
+      if(d.count > 1) html += kv(L ? 'Pools' : 'Pools', d.count);
+      if(p.pairCreatedAt) html += kv(L ? 'Pool creado' : 'Pool created', new Date(p.pairCreatedAt).toLocaleDateString());
+    }
+    if(errs.length) html += '<div class="mini" style="margin-top:10px;opacity:.6">' + esc(errs.join(' · ')) + '</div>';
+    $('tk-stats').innerHTML = html;
+    renderSocials(p);
+    loadChart();
+   }catch(err){
+    $('tk-stats').innerHTML = '<div class="err">' + (LANG === 'es' ? 'Fallo al armar la ficha: ' : 'Failed to build the card: ')
+      + esc(err.message || String(err)) + '</div>';
+   }
+  }).catch(function(err){
+    $('tk-stats').innerHTML = '<div class="err">' + esc(err.message || String(err)) + '</div>';
+  });
+}
+function renderSocials(p){
+  var links = [];
+  var info = (p && p.info) || {};
+  (info.websites || []).forEach(function(w){ if(w.url) links.push({t:'🌐 Web', u:w.url}); });
+  (info.socials || []).forEach(function(s){
+    var ty = String(s.type || '').toLowerCase();
+    var lbl = ty === 'twitter' ? '𝕏 Twitter' : ty === 'telegram' ? '✈️ Telegram'
+            : ty === 'discord' ? '💬 Discord' : '🔗 ' + (s.type || 'link');
+    if(s.url) links.push({t: lbl, u: s.url});
+  });
+  if(TOK.addr !== 'native') links.push({t:'📊 GeckoTerminal', u:'https://www.geckoterminal.com/world-chain/tokens/' + TOK.mkt});
+  var h = '<div class="soc">';
+  links.forEach(function(l, i){
+    h += '<button onclick="openSocial(' + i + ')">' + esc(l.t) + '</button>';
+  });
+  h += '</div>';
+  if(!links.length) h = '<div class="mini" style="margin-top:12px">' + (LANG === 'es' ? 'Sin redes registradas.' : 'No socials on record.') + '</div>';
+  TOK.links = links;
+  $('tk-social').innerHTML = h;
+}
+function openSocial(i){
+  var l = (TOK.links || [])[i];
+  if(l && l.u) window.open(l.u, '_blank');
+}
+function setRange(r){
+  TOK.range = r;
+  ['24h','7d','30d'].forEach(function(k){ $('rg-' + k).className = 'pill' + (k === r ? ' on' : ''); });
+  loadChart();
+}
+function clearChart(){
+  var c = $('tk-chart');
+  if(!c) return;
+  var ctx = c.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  c.width = Math.max(1, c.clientWidth * dpr);
+  c.height = Math.max(1, c.clientHeight * dpr);
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+function loadChart(){
+  clearChart();
+  if(!TOK.pair){ $('tk-chartmsg').textContent = LANG === 'es' ? 'Sin pool, no hay gráfico.' : 'No pool, no chart.'; return; }
+  $('tk-chartmsg').textContent = LANG === 'es' ? 'Cargando gráfico…' : 'Loading chart…';
+  var tf = TOK.range === '24h' ? {t:'hour', a:1, l:24}
+         : TOK.range === '7d'  ? {t:'hour', a:4, l:42}
+         : {t:'day', a:1, l:30};
+  var url = GT + '/networks/world-chain/pools/' + TOK.pair + '/ohlcv/' + tf.t
+          + '?aggregate=' + tf.a + '&limit=' + tf.l + '&currency=usd&token=' + TOK.mkt;
+  var want = TOK.range + '|' + TOK.pair;
+  jget(url).then(function(j){
+    if(want !== TOK.range + '|' + TOK.pair) return;   /* llegó tarde, ya cambió el rango */
+    var list = (j && j.data && j.data.attributes && j.data.attributes.ohlcv_list) || [];
+    var pts = list.map(function(x){ return {t: Number(x[0]), c: parseFloat(x[4])}; })
+                  .filter(function(x){ return isFinite(x.c) && isFinite(x.t); })
+                  .sort(function(a, b){ return a.t - b.t; });
+    if(pts.length < 2){ $('tk-chartmsg').textContent = LANG === 'es' ? 'Todavía no hay suficientes operaciones.' : 'Not enough trades yet.'; return; }
+    TOK.pts = pts;
+    drawChart(pts);
+    var first = pts[0].c, last = pts[pts.length - 1].c;
+    var pct = ((last - first) / first) * 100;
+    $('tk-chartmsg').innerHTML = '<span style="color:' + (pct >= 0 ? 'var(--grn)' : 'var(--red)') + '">'
+      + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%</span> · ' + TOK.range.toUpperCase();
+  }).catch(function(e){
+    $('tk-chartmsg').textContent = (LANG === 'es' ? 'No se pudo cargar el gráfico · ' : 'Could not load the chart · ') + (e.message || '');
+  });
+}
+function drawChart(pts){
+  var c = $('tk-chart'); if(!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  var W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr;
+  var ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  var pad = {l: 8, r: 56, t: 12, b: 8};
+  var lo = Math.min.apply(null, pts.map(function(p){ return p.c; }));
+  var hi = Math.max.apply(null, pts.map(function(p){ return p.c; }));
+  if(hi === lo){ hi = lo * 1.001 + 1e-12; }
+  var t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+  var up = pts[pts.length - 1].c >= pts[0].c;
+  var col = up ? '#2FD98A' : '#FF5C7A';
+  function X(p){ return pad.l + (p.t - t0) / Math.max(1, t1 - t0) * (W - pad.l - pad.r); }
+  function Y(p){ return pad.t + (1 - (p.c - lo) / (hi - lo)) * (H - pad.t - pad.b); }
+
+  ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+  for(var i = 0; i <= 3; i++){
+    var y = pad.t + (H - pad.t - pad.b) * i / 3;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    var v = hi - (hi - lo) * i / 3;
+    ctx.fillStyle = 'rgba(156,140,192,.9)'; ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(fmtUsd(v), W - pad.r + 6, y + 3);
+  }
+  var g = ctx.createLinearGradient(0, pad.t, 0, H);
+  g.addColorStop(0, up ? 'rgba(47,217,138,.28)' : 'rgba(255,92,122,.28)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.beginPath(); ctx.moveTo(X(pts[0]), H - pad.b);
+  pts.forEach(function(p){ ctx.lineTo(X(p), Y(p)); });
+  ctx.lineTo(X(pts[pts.length - 1]), H - pad.b); ctx.closePath();
+  ctx.fillStyle = g; ctx.fill();
+
+  ctx.beginPath();
+  pts.forEach(function(p, i){ i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); });
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+
+  var last = pts[pts.length - 1];
+  ctx.beginPath(); ctx.arc(X(last), Y(last), 8, 0, Math.PI * 2);
+  ctx.fillStyle = up ? 'rgba(47,217,138,.2)' : 'rgba(255,92,122,.2)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(X(last), Y(last), 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = col; ctx.fill();
+}
+function swapFromToken(){
+  var sym = TOK.sym;
+  if(TOK.addr === 'native'){ toast(LANG === 'es' ? 'ETH nativo no se puede intercambiar aquí.' : 'Native ETH cannot be swapped here.'); return; }
+  if(TOK.bal > 0){ S.swap.in = sym; S.swap.out = (sym === 'WLD') ? 'USDC' : 'WLD'; }
+  else { S.swap.in = 'WLD'; S.swap.out = (sym === 'WLD') ? 'USDC' : sym; }
+  S.swap.fee = null;
+  closeSheet('sh-tok'); openSwap();
+}
+function sendFromToken(){
+  if(TOK.addr === 'native'){ toast(LANG === 'es' ? 'ETH nativo no se puede enviar en esta versión.' : 'Native ETH cannot be sent in this version.'); return; }
+  S.send.tok = TOK.sym;
+  closeSheet('sh-tok'); openSend();
+}
+function copyTok(){ copy(TOK.addr); toast(LANG === 'es' ? 'Contrato copiado' : 'Contract copied'); }
+
 /* ═══════════ enviar ═══════════ */
 function openSend(){
   if(!S.send.tok) S.send.tok = 'WLD';
@@ -1035,7 +1345,8 @@ function openReceive(){
 function pickToken(target){
   S.pick = target;
   var h='';
-  allTokens().forEach(function(tk){
+  var lst = (S.tokens && S.tokens.length) ? S.tokens.slice().sort(function(a,b){ return (b.bal||0)-(a.bal||0); }) : allTokens();
+  lst.forEach(function(tk){
     var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
     h += '<button class="row" onclick="choose(\''+tk.sym+'\')">'
       + tokenIcon({addr: tk.addr, sym: tk.sym})

@@ -86,7 +86,8 @@ h2{font-family:var(--disp);font-style:italic;font-weight:700;font-size:20px;marg
 .row{display:flex;align-items:center;gap:12px;padding:14px;background:var(--surf);
   border:1px solid var(--line);border-radius:16px;margin-bottom:10px;width:100%;text-align:left}
 .row:active{background:var(--surf2)}
-.tk{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+.tk img{width:100%;height:100%;border-radius:12px;object-fit:cover;display:block}
+.tk{width:38px;height:38px;overflow:hidden;border-radius:12px;display:flex;align-items:center;justify-content:center;
   font-family:var(--disp);font-weight:700;font-size:13px;background:linear-gradient(140deg,var(--vio),var(--cy));color:#0A0512;flex:0 0 auto}
 .grow{flex:1;min-width:0}
 .t1{font-weight:600;font-size:15px}
@@ -380,7 +381,7 @@ textarea.inp{min-height:78px;resize:vertical}
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b5';
+const BUILD = 'LW b6';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -749,6 +750,7 @@ function discoverTokens(){
         var bal = 0;
         try{ bal = fromUnits(BigInt(x.value || '0'), d); }catch(e){ bal = 0; }
         if(bal <= 0) return;
+        if(tk.icon_url) META[a] = META[a] || tk.icon_url;
         out.push({sym: String(tk.symbol || '?').slice(0,14), name: String(tk.name || 'Token').slice(0,40),
                   addr: a, dec: d, bal: bal, px: parseFloat(tk.exchange_rate) || 0});
       });
@@ -776,12 +778,17 @@ function loadBalances(){
     S.eth = o[1];
   });
 }
+var GECKO_NET = 'world-chain';
+var META = {};
+try{ META = JSON.parse(localStorage.getItem('loot.icons') || '{}'); }catch(e){ META = {}; }
+function saveMeta(){ try{ localStorage.setItem('loot.icons', JSON.stringify(META)); }catch(e){} }
 function loadPrices(){
   var addrs = S.tokens.map(function(t){ return t.addr; });
   var chunks = [];
   for(var i = 0; i < addrs.length; i += 25) chunks.push(addrs.slice(i, i + 25));
   var best = {};
-  return Promise.all(chunks.map(function(c){
+
+  var dex = Promise.all(chunks.map(function(c){
     return fetch('https://api.dexscreener.com/latest/dex/tokens/' + c.join(','))
       .then(function(r){ return r.json(); })
       .then(function(j){
@@ -792,14 +799,35 @@ function loadPrices(){
           var liq = (p.liquidity && p.liquidity.usd) || 0;
           if(!isFinite(usd) || !a) return;
           if(!best[a] || liq > best[a].liq) best[a] = {usd: usd, liq: liq};
+          if(p.info && p.info.imageUrl) META[a] = META[a] || p.info.imageUrl;
         });
       }).catch(function(){});
-  })).then(function(){
+  }));
+
+  /* GeckoTerminal: precio de respaldo y, sobre todo, el logo oficial del token */
+  var gecko = Promise.all(chunks.map(function(c){
+    return fetch('https://api.geckoterminal.com/api/v2/networks/' + GECKO_NET + '/tokens/multi/' + c.join(','))
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        ((j && j.data) || []).forEach(function(d){
+          var at = d.attributes || {};
+          var a = String(at.address || '').toLowerCase();
+          if(!a) return;
+          var usd = parseFloat(at.price_usd);
+          if(isFinite(usd) && (!best[a] || best[a].liq < 0)) best[a] = {usd: usd, liq: -1};
+          var img = at.image_url;
+          if(img && String(img).indexOf('missing') < 0) META[a] = img;
+        });
+      }).catch(function(){});
+  }));
+
+  return Promise.all([dex, gecko]).then(function(){
     var m = {};
     Object.keys(best).forEach(function(k){ m[k] = best[k].usd; });
     var usdc = tokBySym('USDC');
     if(usdc && !m[usdc.addr]) m[usdc.addr] = 1;
     S.prices = m;
+    saveMeta();
   });
 }
 function refreshAll(showToast){
@@ -823,6 +851,12 @@ function looksSpam(r){
   var s = ((r.sym || '') + ' ' + (r.name || '')).toLowerCase();
   return /(https?:|www\.|\.com|\.io|\.xyz|\.org|claim|airdrop|reward|visit|bonus)/.test(s);
 }
+function tokenIcon(r){
+  var img = META[r.addr];
+  if(img) return '<div class="tk"><img src="' + esc(img) + '" alt=""></div>';
+  var grey = r.spam ? ' style="background:linear-gradient(140deg,#3A2A55,#2C1B4A);color:var(--mut)"' : '';
+  return '<div class="tk"' + grey + '>' + esc(r.sym.slice(0,4)) + '</div>';
+}
 function renderWallet(){
   var total = 0, html = '';
   var rows = S.tokens.map(function(tk){
@@ -831,7 +865,9 @@ function renderWallet(){
   }).filter(function(r){ return r.base || r.bal > 0; });
 
   var weth = tokBySym('WETH');
+  var wldT = tokBySym('WLD');
   var ethPx = (weth && S.prices[weth.addr]) || 0;
+  var wldUsd = (wldT && S.prices[wldT.addr]) || 0;
   if(S.eth > 0) rows.push({sym:'ETH', name:'Ether', addr:'native', dec:18, base:true, bal:S.eth, px:ethPx, usd:S.eth*ethPx});
 
   rows.forEach(function(r){ r.spam = looksSpam(r); if(!r.spam) total += (r.usd || 0); });
@@ -842,11 +878,12 @@ function renderWallet(){
   S.totalUsd = total;
 
   rows.forEach(function(r){
-    var sub = r.spam ? (LANG === 'es' ? '⚠️ sin precio · verifica antes de tocarlo' : '⚠️ no price · verify before touching')
-                     : esc(r.name);
-    html += '<div class="row">'
-      + '<div class="tk"' + (r.spam ? ' style="background:linear-gradient(140deg,#3A2A55,#2C1B4A);color:var(--mut)"' : '') + '>'
-      + esc(r.sym.slice(0,4)) + '</div>'
+    var sub;
+    if(r.spam) sub = (LANG === 'es' ? '⚠️ sin precio · verifica antes de tocarlo' : '⚠️ no price · verify before touching');
+    else if(r.px && wldUsd) sub = fmtUsd(r.px) + ' · ' + fmtAmt(r.px / wldUsd) + ' WLD';
+    else if(r.px) sub = fmtUsd(r.px);
+    else sub = esc(r.name);
+    html += '<div class="row">' + tokenIcon(r)
       + '<div class="grow"><div class="t1">' + esc(r.sym) + '</div><div class="t2">' + sub + '</div></div>'
       + '<div class="rt"><div class="t1">' + fmtAmt(r.bal) + '</div>'
       + '<div class="t2">' + (r.px ? fmtUsd(r.usd) : '—') + '</div></div></div>';
@@ -858,8 +895,8 @@ function renderWallet(){
   }
   $('list-tokens').innerHTML = html || '<div class="empty">' + (LANG === 'es' ? 'Sin tokens todavía.' : 'No tokens yet.') + '</div>';
   $('total-usd').textContent = fmtUsd(total);
-  var wld = rows.filter(function(x){ return x.sym === 'WLD'; })[0];
-  $('total-sub').textContent = wld ? (fmtAmt(wld.bal) + ' WLD') : (LANG === 'es' ? 'Sin WLD' : 'No WLD');
+  var wldRow = rows.filter(function(x){ return x.sym === 'WLD'; })[0];
+  $('total-sub').textContent = wldRow ? (fmtAmt(wldRow.bal) + ' WLD') : (LANG === 'es' ? 'Sin WLD' : 'No WLD');
   $('chip-user').textContent = S.user ? ('@' + S.user) : short(S.addr);
 }
 function earnTab(k){
@@ -1001,7 +1038,7 @@ function pickToken(target){
   allTokens().forEach(function(tk){
     var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
     h += '<button class="row" onclick="choose(\''+tk.sym+'\')">'
-      + '<div class="tk">'+esc(tk.sym.slice(0,4))+'</div>'
+      + tokenIcon({addr: tk.addr, sym: tk.sym})
       + '<div class="grow"><div class="t1">'+esc(tk.sym)+'</div><div class="t2">'+esc(tk.name)+'</div></div>'
       + '<div class="rt"><div class="t1">'+fmtAmt(row?row.bal:0)+'</div></div></button>';
   });

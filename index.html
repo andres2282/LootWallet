@@ -196,6 +196,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
     <div class="hsub">World Chain</div>
   </div>
   <button class="chip" id="chip-user" onclick="go('profile')">…</button>
+  <button id="btn-refresh" onclick="refrescarYa()" style="margin-left:8px;width:38px;height:38px;border-radius:50%;background:var(--surf);border:1px solid var(--line);font-size:16px;flex:0 0 auto">↻</button>
 </header>
 
 <!-- WALLET -->
@@ -413,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b34';
+const BUILD = 'LW b36';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -1479,6 +1480,13 @@ function renderProfile(){
     : 'TREASURY is still a placeholder: LOOT ADS cannot collect payments.');
   showBox('cfg-warn', 'err', warn);
 }
+function refrescarYa(){
+  var b = $('btn-refresh');
+  if(b){ b.innerHTML = '<span class="spin"></span>'; }
+  busyLoad = false;               /* si quedó trabado, se desatasca */
+  clearTimeout(S.loadGuard);
+  refreshAll(true).then(function(){ if(b) b.textContent = '↻'; });
+}
 function verOcultos(){ S.verOcultos = !S.verOcultos; safeRender(); }
 function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Address copied'); }
 
@@ -2050,25 +2058,56 @@ function encPath(hops){
   }
   return '0x' + s.toLowerCase();
 }
-/* busca un par V2 preguntando qué pools existen para ese token */
+/* Busca el par preguntando por el token MENOS común: WLD devuelve solo sus
+   pools más grandes, así que preguntando por él los tokens chicos no aparecen. */
+function paresDe(addr){
+  return jget('https://api.dexscreener.com/latest/dex/tokens/' + addr, 9000).then(function(j){
+    return ((j && j.pairs) || []).filter(function(p){ return p.chainId === 'worldchain'; });
+  }).catch(function(){ return []; });
+}
+function esBase(a){
+  return BASE_TOKENS.some(function(t){ return t.addr === a; });
+}
 function findV2Pair(a, b){
-  return jget('https://api.dexscreener.com/latest/dex/tokens/' + a, 8000).then(function(j){
-    var cand = ((j && j.pairs) || []).filter(function(p){
-      if(p.chainId !== 'worldchain') return false;
+  /* se consulta el raro primero; si los dos son comunes, se consultan ambos */
+  var orden = esBase(a) && !esBase(b) ? [b, a] : (!esBase(a) && esBase(b) ? [a, b] : [a, b]);
+  return paresDe(orden[0]).then(function(lista){
+    if(!lista.length && orden[1]) return paresDe(orden[1]);
+    return lista;
+  }).then(function(lista){
+    S.paresVistos = lista;
+    var cand = lista.filter(function(p){
       var bt = String((p.baseToken && p.baseToken.address) || '').toLowerCase();
       var qt = String((p.quoteToken && p.quoteToken.address) || '').toLowerCase();
       return (bt === a && qt === b) || (bt === b && qt === a);
     });
     if(!cand.length) return null;
     cand.sort(function(x, y){ return ((y.liquidity && y.liquidity.usd) || 0) - ((x.liquidity && x.liquidity.usd) || 0); });
-    var pair = String(cand[0].pairAddress || '').toLowerCase();
-    if(!/^0x[0-9a-f]{40}$/.test(pair)) return null;
-    /* getReserves() solo responde en pools V2 */
-    return ethCall(pair, sel('getReserves()')).then(function(r){
-      return (r && r.length >= 130) ? pair : null;
-    }).catch(function(){ return null; });
-  }).catch(function(){ return null; });
+    /* se prueban por orden de liquidez hasta dar con uno que sea estilo V2 */
+    function probar(i){
+      if(i >= cand.length) return null;
+      var pair = String(cand[i].pairAddress || '').toLowerCase();
+      if(!/^0x[0-9a-f]{40}$/.test(pair)) return probar(i + 1);
+      return ethCall(pair, sel('getReserves()')).then(function(r){
+        return (r && r.length >= 130) ? pair : probar(i + 1);
+      }).catch(function(){ return probar(i + 1); });
+    }
+    return probar(0);
+  });
 }
+/* Si no hay ruta, decir con qué SÍ se puede cambiar ese token en vez de un "no hay pool" seco. */
+function sugerenciaPares(otro){
+  var l = S.paresVistos || [];
+  var syms = {};
+  l.forEach(function(p){
+    var bt = String((p.baseToken && p.baseToken.address) || '').toLowerCase();
+    var s = (bt === otro) ? (p.quoteToken && p.quoteToken.symbol) : (p.baseToken && p.baseToken.symbol);
+    if(s) syms[s] = ((p.liquidity && p.liquidity.usd) || 0) + (syms[s] || 0);
+  });
+  var top = Object.keys(syms).sort(function(a, b){ return syms[b] - syms[a]; }).slice(0, 3);
+  return top.length ? top.join(', ') : '';
+}
+/* si no hay pool directo, prueba pasar por WLD, USDC o WETH */
 /* si no hay pool directo, prueba pasar por WLD, USDC o WETH */
 function findRoute(a, b){
   if(S.swap.route && S.swap.route.a === a && S.swap.route.b === b) return Promise.resolve(S.swap.route);
@@ -2100,9 +2139,13 @@ function findRoute(a, b){
       }).catch(function(){ return null; });
     })).then(function(res){
       var ok = res.filter(Boolean);
-      if(!ok.length) throw new Error(LANG === 'es'
-        ? 'No hay pool de Uniswap para ese par, ni directo ni pasando por WLD, USDC o WETH.'
-        : 'No Uniswap pool for that pair, direct or via WLD, USDC or WETH.');
+      if(!ok.length){
+        var sug = sugerenciaPares(esBase(a) ? b : a);
+        throw new Error((LANG === 'es'
+          ? 'No hay pool para ese par, ni directo ni pasando por WLD, USDC o WETH.'
+          : 'No pool for that pair, direct or via WLD, USDC or WETH.')
+          + (sug ? (LANG === 'es' ? ' Ese token sí tiene pool contra: ' : ' That token does have pools against: ') + sug + '.' : ''));
+      }
       ok.sort(function(x, y){ return x.liq > y.liq ? -1 : 1; });
       var w = ok[0];
       var r = {a:a, b:b, kind:'path', fee: w.f1, label: w.mid.sym,
@@ -2401,9 +2444,21 @@ function runDiag(){
     showBox('diag-out','ok', lines.map(esc).join('<br>'));
     lines.push('👛 '+(S.addr||'—'));
     lines.push('🔀 LootRouter: ' + LOOT_ROUTER);
-    return ethCallFrom(LOOT_ROUTER, sel('feeFor(address)') + enc(['address'],[S.addr]), S.addr)
-      .then(function(r){ lines.push('   comisión que te aplica: ' + (Number(dec(['uint16'], r)[0]) / 100) + '%'); })
-      .catch(function(e){ lines.push('   ⚠️ el router no responde: ' + (e.message || '')); });
+    return ethCall(LOOT_ROUTER, sel('UNI()')).then(function(r){
+      var uni = '0x' + String(r).slice(-40);
+      lines.push('   apunta a Uniswap: ' + uni);
+      return rpc('eth_getCode', [uni, 'latest']).then(function(code){
+        lines.push('   ¿tiene código?: ' + (code && code.length > 4 ? 'sí (' + ((code.length - 2) / 2) + ' bytes)' : '❌ NO — dirección vacía'));
+        return ethCall(uni, sel('factory()'))
+          .then(function(f){ lines.push('   factory(): ' + '0x' + String(f).slice(-40) + ' → es un router de Uniswap ✅'); })
+          .catch(function(){ lines.push('   factory(): ❌ no responde → NO es un SwapRouter'); });
+      });
+    }).catch(function(e){ lines.push('   ⚠️ no pude leer el router: ' + (e.message || '')); })
+    .then(function(){
+      return ethCallFrom(LOOT_ROUTER, sel('feeFor(address)') + enc(['address'],[S.addr]), S.addr)
+        .then(function(r){ lines.push('   comisión que te aplica: ' + (Number(dec(['uint16'], r)[0]) / 100) + '%'); })
+        .catch(function(e){ lines.push('   ⚠️ feeFor no responde: ' + (e.message || '')); });
+    });
     showBox('diag-out','ok', lines.map(esc).join('<br>'));
   });
 }

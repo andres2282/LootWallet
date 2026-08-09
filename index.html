@@ -268,6 +268,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
       <button class="btn mini ghost" onclick="setLang('en')">EN</button></span></div>
   </div>
   <button class="btn ghost" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
+  <button class="btn ghost" style="margin-top:10px" onclick="testSign()">✍️ Probar firma</button>
   <div id="diag-out"></div>
   <div class="note" style="margin-top:14px">
     <b>Build <span id="p-build"></span></b><br>
@@ -410,7 +411,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b19';
+const BUILD = 'LW b23';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -581,6 +582,25 @@ function rpcOne(url, method, params){
 function rpc(method, params){
   return Promise.any(RPCS.map(function(u){ return rpcOne(u, method, params); }));
 }
+/* varias lecturas en UNA sola petición: es lo que hace que la wallet abra rápido */
+function rpcBatchOne(url, reqs){
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reqs)})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(!Array.isArray(j)) throw new Error('sin lotes');
+      var by = {};
+      j.forEach(function(x){ by[x.id] = x; });
+      return reqs.map(function(q){
+        var r = by[q.id];
+        if(!r || r.error || r.result === undefined) throw new Error('lote incompleto');
+        return r.result;
+      });
+    });
+}
+function rpcBatch(reqs){
+  if(!reqs.length) return Promise.resolve([]);
+  return Promise.any(RPCS.map(function(u){ return rpcBatchOne(u, reqs); }));
+}
 /* selectores fijos: los de Uniswap están comprobados en producción */
 const SELS = {
   'transfer(address,uint256)':'0xa9059cbb',
@@ -598,7 +618,10 @@ const SELS = {
   'getPool(address,address,uint24)':'0x1698ee82',
   'quoteExactInputSingle((address,address,uint256,uint24,uint160))':'0xc6a5026a',
   'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))':'0x04e45aaf',
-  'exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))':'0x414bf389'
+  'exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))':'0x414bf389',
+  'quoteExactInput(bytes,uint256)':'0xcdca1753',
+  'exactInput((bytes,address,uint256,uint256))':'0xb858183f',
+  'exactInput((bytes,address,uint256,uint256,uint256))':'0xc04b8d59'
 };
 function sel(sig){ return SELS[sig] || ethers.id(sig).slice(0,10); }
 function enc(types, values){ return ethers.AbiCoder.defaultAbiCoder().encode(types, values).slice(2); }
@@ -695,6 +718,73 @@ function mkCall(name, args){
   if(typeof MK[name] === 'function') return Promise.resolve(MK[name](args));
   return Promise.reject(new Error('comando '+name+' no disponible'));
 }
+/* Fragmentos ABI para el formato "alto" de MiniKit ({address, abi, functionName, args}).
+   Algunas versiones de World App ignoran el formato crudo {to, data}. */
+const ABI = {
+  transfer: [{name:'transfer', type:'function', stateMutability:'nonpayable',
+    inputs:[{name:'to',type:'address'},{name:'amount',type:'uint256'}], outputs:[{type:'bool'}]}],
+  approve: [{name:'approve', type:'function', stateMutability:'nonpayable',
+    inputs:[{name:'spender',type:'address'},{name:'amount',type:'uint256'}], outputs:[{type:'bool'}]}],
+  exactInputSingle: [{name:'exactInputSingle', type:'function', stateMutability:'payable',
+    inputs:[{name:'params', type:'tuple', components:[
+      {name:'tokenIn',type:'address'},{name:'tokenOut',type:'address'},{name:'fee',type:'uint24'},
+      {name:'recipient',type:'address'},{name:'amountIn',type:'uint256'},
+      {name:'amountOutMinimum',type:'uint256'},{name:'sqrtPriceLimitX96',type:'uint160'}]}],
+    outputs:[{name:'amountOut',type:'uint256'}]}],
+  exactInput: [{name:'exactInput', type:'function', stateMutability:'payable',
+    inputs:[{name:'params', type:'tuple', components:[
+      {name:'path',type:'bytes'},{name:'recipient',type:'address'},
+      {name:'amountIn',type:'uint256'},{name:'amountOutMinimum',type:'uint256'}]}],
+    outputs:[{name:'amountOut',type:'uint256'}]}]
+};
+/* cada transacción lleva las dos formas: la cruda y la de ABI */
+function tx(addr, sig, types, values, fn, args){
+  var o = {to: String(addr).toLowerCase(), data: sel(sig) + enc(types, values)};
+  if(fn && ABI[fn]) o._hi = {address: String(addr).toLowerCase(), abi: ABI[fn], functionName: fn, args: args};
+  return o;
+}
+function toHigh(batch){
+  return batch.map(function(t){
+    if(!t._hi) throw new Error('sin ABI');
+    return t._hi;
+  });
+}
+function stripLow(batch){
+  return batch.map(function(t){ return {to: t.to, data: t.data}; });
+}
+/* si World App no contesta, el botón no puede quedarse girando para siempre */
+function withTimeout(pr, ms, msg){
+  return Promise.race([pr, new Promise(function(_, rej){
+    setTimeout(function(){ rej(new Error(msg)); }, ms || 90000);
+  })]);
+}
+function sendTx(batch, ms){
+  var timeout = ms || 60000;
+  var noResp = LANG === 'es'
+    ? 'World App no respondió con el formato directo.'
+    : 'World App did not respond to the raw format.';
+  return withTimeout(mkCall('sendTransaction', {transaction: stripLow(batch)}), timeout, noResp)
+    .then(function(res){
+      var p = payload(res);
+      if(p && p.status === 'error') throw new Error(txError(p));
+      S.txMode = 'to/data';
+      return res;
+    })
+    .catch(function(e1){
+      /* segundo intento con {address, abi, functionName, args} */
+      var hi;
+      try{ hi = toHigh(batch); }catch(e){ throw e1; }
+      return withTimeout(mkCall('sendTransaction', {transaction: hi}), timeout, LANG === 'es'
+        ? 'World App no respondió con ninguno de los dos formatos. Revisa que TODAS las direcciones del lote estén en Contract Entrypoints.'
+        : 'World App did not respond to either format. Check that EVERY address in the batch is in Contract Entrypoints.')
+        .then(function(res){
+          var p = payload(res);
+          if(p && p.status === 'error') throw new Error(txError(p));
+          S.txMode = 'abi';
+          return res;
+        });
+    });
+}
 function payload(res){
   if(!res) return null;
   return res.finalPayload || res.payload || res;
@@ -786,6 +876,7 @@ function connect(){
     $('splash').classList.add('hidden');
     $('app').classList.remove('hidden');
     completeMission('connect');
+    loadCache();            /* lo último que viste, al instante */
     renderAll();
     refreshAll(false);
   }).catch(function(e){
@@ -831,22 +922,48 @@ function discoverTokens(){
       return out;
    });
 }
+function cacheKey(){ return 'loot.cache.' + S.addr; }
+function saveCache(){
+  try{
+    localStorage.setItem(cacheKey(), JSON.stringify({
+      tokens: S.tokens, eth: S.eth, prices: S.prices, at: Date.now()
+    }));
+  }catch(e){}
+}
+function loadCache(){
+  try{
+    var c = JSON.parse(localStorage.getItem(cacheKey()) || 'null');
+    if(!c || !c.tokens || !c.tokens.length) return false;
+    S.tokens = c.tokens; S.eth = c.eth || 0; S.prices = c.prices || {};
+    return true;
+  }catch(e){ return false; }
+}
 function loadBaseBalances(){
   var base = allTokens();
-  var jobs = base.map(function(tk){
-    var data = sel('balanceOf(address)') + enc(['address'],[S.addr]);
-    return ethCall(tk.addr, data).then(function(r){
-      return Object.assign({}, tk, {bal: fromUnits(BigInt(r), tk.dec), base: true});
-    }).catch(function(){ return Object.assign({}, tk, {bal: 0, base: true, failed: true}); });
+  var data = sel('balanceOf(address)') + enc(['address'],[S.addr]);
+  var reqs = base.map(function(tk, i){
+    return {jsonrpc:'2.0', id: 100 + i, method:'eth_call', params:[{to: tk.addr, data: data}, 'latest']};
   });
-  var ethJob = rpc('eth_getBalance', [S.addr, 'latest'])
-    .then(function(r){ return fromUnits(BigInt(r), 18); }).catch(function(){ return 0; });
-  return Promise.all([Promise.all(jobs), ethJob]).then(function(o){
+  reqs.push({jsonrpc:'2.0', id: 99, method:'eth_getBalance', params:[S.addr, 'latest']});
+
+  function aplicar(res){
     var keep = {};
     (S.tokens || []).forEach(function(t){ if(!t.base) keep[t.addr] = t; });
-    o[0].forEach(function(t){ keep[t.addr] = t; });
+    base.forEach(function(tk, i){
+      var bal = 0;
+      try{ bal = fromUnits(BigInt(res[i]), tk.dec); }catch(e){}
+      keep[tk.addr] = Object.assign({}, tk, {bal: bal, base: true});
+    });
     S.tokens = Object.keys(keep).map(function(k){ return keep[k]; });
-    S.eth = o[1];
+    try{ S.eth = fromUnits(BigInt(res[res.length - 1]), 18); }catch(e){ S.eth = 0; }
+  }
+  return rpcBatch(reqs).then(aplicar).catch(function(){
+    /* algún RPC no acepta lotes: se cae al modo de una por una */
+    var jobs = base.map(function(tk){
+      return ethCall(tk.addr, data).catch(function(){ return '0x0'; });
+    });
+    jobs.push(rpc('eth_getBalance', [S.addr, 'latest']).catch(function(){ return '0x0'; }));
+    return Promise.all(jobs).then(aplicar);
   });
 }
 function mergeDiscovered(list){
@@ -914,7 +1031,10 @@ function verifyLootToken(){
     .then(function(r){
       var d = Number(dec(['uint8'], r[0])[0]);
       if(isFinite(d) && d >= 0 && d <= 36){ BASE_TOKENS[0].dec = d; localStorage.setItem('loot.tokdec', String(d)); }
-      try{ BASE_TOKENS[0].sym = dec(['string'], r[1])[0] || 'LOOT'; }catch(e){}
+      try{
+        var sy = dec(['string'], r[1])[0];
+        if(typeof sy === 'string' && sy.length && sy.length < 15) BASE_TOKENS[0].sym = sy;
+      }catch(e){}
     }).catch(function(){});
 }
 /* comisión vigente: la mitad si el usuario tiene el mínimo de $LOOT */
@@ -928,7 +1048,7 @@ function feeTxt(){ return (feeBps() / 100).toFixed(2).replace(/0$/, '') + '%'; }
 var busyLoad = false;
 function setLoading(on){
   var el = $('total-sub'); if(!el) return;
-  if(on) el.innerHTML = '<span class="spin"></span> ' + (LANG === 'es' ? 'Actualizando…' : 'Updating…');
+  if(on && !(S.tokens && S.tokens.length)) el.innerHTML = '<span class="spin"></span> ' + (LANG === 'es' ? 'Cargando…' : 'Loading…');
 }
 function refreshAll(showToast){
   if(!S.addr || busyLoad) return Promise.resolve();
@@ -936,17 +1056,18 @@ function refreshAll(showToast){
   setLoading(true);
   /* etapa 1: lo conocido, que son 5 lecturas y entra al instante */
   return verifyLootToken().then(loadBaseBalances).then(function(){
-    renderWallet();
-    loadPrices().then(renderWallet).catch(function(){});
+    safeRender();
+    loadPrices().then(safeRender).catch(function(){});
     /* etapa 2: el resto de tokens del explorador, sin bloquear la pantalla */
     return discoverTokens().then(function(l){ S.discErr = ''; return l; })
       .catch(function(e){ S.discErr = e.message || 'sin respuesta'; return []; });
   }).then(function(disc){
-    if(disc && disc.length){ mergeDiscovered(disc); renderWallet(); return loadPrices(); }
+    if(disc && disc.length){ mergeDiscovered(disc); safeRender(); return loadPrices(); }
   }).then(function(){
-    renderWallet();
+    safeRender();
     var wld = S.tokens.filter(function(x){ return x.sym === 'WLD'; })[0];
     if(wld && wld.bal >= 1) completeMission('hold');
+    saveCache();
     if(showToast) toast(LANG === 'es' ? 'Saldos actualizados' : 'Balances updated');
   }).catch(function(){
     var el = $('total-sub');
@@ -962,7 +1083,11 @@ document.addEventListener('visibilitychange', function(){
 });
 
 /* ═══════════ render ═══════════ */
-function renderAll(){ applyLang(); renderWallet(); renderEarn(); renderDisc(); renderProfile(); renderAdsPlans(); }
+function safeRender(){ try{ renderWallet(); }catch(e){
+  var el = $('list-tokens');
+  if(el) el.innerHTML = '<div class="err">' + esc(e.message || String(e)) + '</div>';
+} }
+function renderAll(){ applyLang(); safeRender(); renderEarn(); renderDisc(); renderProfile(); renderAdsPlans(); }
 function looksSpam(r){
   if(r.base) return false;
   if(r.px > 0) return false;
@@ -970,6 +1095,8 @@ function looksSpam(r){
   return /(https?:|www\.|\.com|\.io|\.xyz|\.org|claim|airdrop|reward|visit|bonus)/.test(s);
 }
 function tokenIcon(r){
+  r = r || {};
+  r.sym = String(r.sym == null ? '?' : r.sym);
   var img = META[r.addr];
   if(img) return '<div class="tk"><img src="' + esc(img) + '" alt=""></div>';
   var grey = r.spam ? ' style="background:linear-gradient(140deg,#3A2A55,#2C1B4A);color:var(--mut)"' : '';
@@ -996,6 +1123,9 @@ function renderWallet(){
   S.totalUsd = total;
 
   rows.forEach(function(r){
+   try{
+    r.sym = String(r.sym == null ? '?' : r.sym);
+    r.name = String(r.name == null ? '' : r.name);
     var sub;
     if(r.spam) sub = (LANG === 'es' ? '⚠️ sin precio · verifica antes de tocarlo' : '⚠️ no price · verify before touching');
     else if(r.px && wldUsd) sub = fmtUsd(r.px) + ' · ' + fmtAmt(r.px / wldUsd) + ' WLD';
@@ -1005,6 +1135,7 @@ function renderWallet(){
       + '<div class="grow"><div class="t1">' + esc(r.sym) + '</div><div class="t2">' + sub + '</div></div>'
       + '<div class="rt"><div class="t1">' + fmtAmt(r.bal) + '</div>'
       + '<div class="t2">' + (r.px ? fmtUsd(r.usd) : '—') + '</div></div></button>';
+   }catch(e){}
   });
   if(S.discErr){
     html += '<div class="note">' + (LANG === 'es'
@@ -1579,7 +1710,7 @@ function swapFromToken(){
   if(TOK.addr === 'native'){ toast(LANG === 'es' ? 'ETH nativo no se puede intercambiar aquí.' : 'Native ETH cannot be swapped here.'); return; }
   if(TOK.bal > 0){ S.swap.in = sym; S.swap.out = (sym === 'WLD') ? 'USDC' : 'WLD'; }
   else { S.swap.in = 'WLD'; S.swap.out = (sym === 'WLD') ? 'USDC' : sym; }
-  S.swap.fee = null;
+  S.swap.fee = null; S.swap.route = null;
   closeSheet('sh-tok'); openSwap();
 }
 function sendFromToken(){
@@ -1622,13 +1753,10 @@ function doSend(){
 
   var units;
   try{ units = toUnits(amt, tk.dec); }catch(e){ return showBox('send-msg','err','Cantidad inválida'); }
-  var data = sel('transfer(address,uint256)') + enc(['address','uint256'],[to, units]);
   busy('send-go', true);
   showBox('send-msg','err','');
-  mkCall('sendTransaction', {transaction:[{to: tk.addr, data: data, value:'0x0'}]})
+  sendTx([tx(tk.addr, 'transfer(address,uint256)', ['address','uint256'], [to, units], 'transfer', [to, units.toString()])])
    .then(function(res){
-      var p = payload(res);
-      if(p && p.status === 'error') throw new Error(txError(p));
       showBox('send-msg','ok', (LANG==='es'?'Enviado. ':'Sent. ') + fmtAmt(amt)+' '+tk.sym+' → '+short(to));
       $('send-amt').value='';
       completeMission('send');
@@ -1675,7 +1803,7 @@ function choose(sym){
   if(S.pick==='swapIn'){ if(S.swap.out===sym) S.swap.out = S.swap.in; S.swap.in = sym; }
   if(S.pick==='swapOut'){ if(S.swap.in===sym) S.swap.in = S.swap.out; S.swap.out = sym; }
   closeSheet('sh-pick');
-  if(S.pick.indexOf('swap')===0){ S.swap.fee=null; renderSwap(); quoteSoon(); }
+  if(S.pick.indexOf('swap')===0){ S.swap.fee=null; S.swap.route=null; renderSwap(); quoteSoon(); }
 }
 
 /* ═══════════ agregar token ═══════════ */
@@ -1731,7 +1859,7 @@ function renderSwap(){
 }
 function flipSwap(){
   var a = S.swap.in; S.swap.in = S.swap.out; S.swap.out = a;
-  S.swap.fee = null; $('sw-in').value=''; $('sw-out').value='';
+  S.swap.fee = null; S.swap.route = null; $('sw-in').value=''; $('sw-out').value='';
   renderSwap(); quoteSoon();
 }
 function swapMax(){
@@ -1748,8 +1876,7 @@ function setSlip(v){
   updateMin();
 }
 /* busca el pool con más liquidez entre las cuatro comisiones */
-function findFee(a, b){
-  if(S.swap.fee) return Promise.resolve(S.swap.fee);
+function bestPool(a, b){
   var jobs = FEES.map(function(f){
     var d = sel('getPool(address,address,uint24)') + enc(['address','address','uint24'],[a,b,f]);
     return ethCall(UNI_FACTORY, d).then(function(r){
@@ -1757,18 +1884,54 @@ function findFee(a, b){
       if(/^0x0{40}$/i.test(pool)) return null;
       return ethCall(pool, sel('liquidity()')).then(function(l){
         var liq = BigInt(l);
-        return liq > 0n ? {fee:f, pool:pool.toLowerCase(), liq:liq} : null;
+        return liq > 0n ? {fee: f, pool: pool.toLowerCase(), liq: liq} : null;
       }).catch(function(){ return null; });
     }).catch(function(){ return null; });
   });
   return Promise.all(jobs).then(function(res){
     var ok = res.filter(Boolean);
-    if(!ok.length) throw new Error(LANG==='es'
-      ? 'No hay pool de Uniswap para ese par en World Chain.'
-      : 'There is no Uniswap pool for that pair on World Chain.');
-    ok.sort(function(x,y){ return x.liq > y.liq ? -1 : 1; });
-    S.swap.fee = ok[0];
+    if(!ok.length) return null;
+    ok.sort(function(x, y){ return x.liq > y.liq ? -1 : 1; });
     return ok[0];
+  });
+}
+function encPath(hops){
+  /* tokenIn + fee + [medio + fee] + tokenOut, cada fee en 3 bytes */
+  var s = hops[0].token.slice(2);
+  for(var i = 0; i < hops.length - 1; i++){
+    s += hops[i].fee.toString(16).padStart(6, '0') + hops[i + 1].token.slice(2);
+  }
+  return '0x' + s.toLowerCase();
+}
+/* si no hay pool directo, prueba pasar por WLD, USDC o WETH */
+function findRoute(a, b){
+  if(S.swap.route && S.swap.route.a === a && S.swap.route.b === b) return Promise.resolve(S.swap.route);
+  return bestPool(a, b).then(function(direct){
+    if(direct){
+      var r = {a:a, b:b, kind:'single', fee: direct.fee, pool: direct.pool, label:''};
+      S.swap.route = r; return r;
+    }
+    var mids = [tokBySym('WLD'), tokBySym('USDC'), tokBySym('WETH')]
+      .filter(Boolean).map(function(t){ return t; })
+      .filter(function(t){ return t.addr !== a && t.addr !== b; });
+    if(!mids.length) throw new Error(LANG === 'es' ? 'No hay ruta para ese par en World Chain.' : 'No route for that pair on World Chain.');
+    return Promise.all(mids.map(function(m){
+      return Promise.all([bestPool(a, m.addr), bestPool(m.addr, b)]).then(function(o){
+        if(!o[0] || !o[1]) return null;
+        var liq = (o[0].liq < o[1].liq) ? o[0].liq : o[1].liq;   /* el cuello de botella manda */
+        return {mid: m, f1: o[0].fee, f2: o[1].fee, liq: liq};
+      }).catch(function(){ return null; });
+    })).then(function(res){
+      var ok = res.filter(Boolean);
+      if(!ok.length) throw new Error(LANG === 'es'
+        ? 'No hay pool de Uniswap para ese par, ni directo ni pasando por WLD, USDC o WETH.'
+        : 'No Uniswap pool for that pair, direct or via WLD, USDC or WETH.');
+      ok.sort(function(x, y){ return x.liq > y.liq ? -1 : 1; });
+      var w = ok[0];
+      var r = {a:a, b:b, kind:'path', fee: w.f1, label: w.mid.sym,
+               path: encPath([{token:a, fee:w.f1}, {token:w.mid.addr, fee:w.f2}, {token:b}])};
+      S.swap.route = r; return r;
+    });
   });
 }
 var quoteTimer=null;
@@ -1778,31 +1941,34 @@ function quoteSoon(){
 }
 function doQuote(){
   var amt = num($('sw-in').value);
-  if(!isFinite(amt) || amt<=0){ $('sw-out').value=''; S.swap.quote=0; $('sw-rate').textContent='—'; updateMin(); return; }
+  if(!isFinite(amt) || amt <= 0){ $('sw-out').value=''; S.swap.quote=0; $('sw-rate').textContent='—'; updateMin(); return; }
   var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
   if(!ti || !to) return;
   $('sw-out').value = '…';
-  findFee(ti.addr, to.addr).then(function(f){
-    $('sw-fee').textContent = (f.fee/10000)+'%';
+  findRoute(ti.addr, to.addr).then(function(rt){
+    $('sw-fee').textContent = (rt.fee / 10000) + '%' + (rt.kind === 'path' ? (LANG === 'es' ? ' · vía ' : ' · via ') + rt.label : '');
     $('sw-lootfee').textContent = feeTxt();
     var gross = toUnits(amt, ti.dec);
     var fee = (gross * BigInt(feeBps())) / 10000n;
     var units = gross - fee;
     S.swap.gross = gross; S.swap.fee_ = fee; S.swap.net = units;
-    var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
-          + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, f.fee, 0]]);
-    return ethCall(UNI_QUOTER, d);
-  }).then(function(r){
-    var out = dec(['uint256','uint160','uint32','uint256'], r)[0];
+    if(rt.kind === 'single'){
+      var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
+            + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, rt.fee, 0]]);
+      return ethCall(UNI_QUOTER, d).then(function(r){ return dec(['uint256','uint160','uint32','uint256'], r)[0]; });
+    }
+    var d2 = sel('quoteExactInput(bytes,uint256)') + enc(['bytes','uint256'], [rt.path, units]);
+    return ethCall(UNI_QUOTER, d2).then(function(r){ return dec(['uint256','uint160[]','uint32[]','uint256'], r)[0]; });
+  }).then(function(out){
     var human = fromUnits(out, to.dec);
     S.swap.quote = out;
     $('sw-out').value = fmtAmt(human);
-    $('sw-rate').textContent = '1 '+S.swap.in+' ≈ '+fmtAmt(human/amt)+' '+S.swap.out;
+    $('sw-rate').textContent = '1 ' + S.swap.in + ' ≈ ' + fmtAmt(human / amt) + ' ' + S.swap.out;
     showBox('sw-msg','err','');
     updateMin();
   }).catch(function(e){
     $('sw-out').value=''; S.swap.quote=0;
-    showBox('sw-msg','err', esc(e.message||String(e)));
+    showBox('sw-msg','err', esc(e.message || String(e)));
     updateMin();
   });
 }
@@ -1836,30 +2002,38 @@ function doSwap(){
   if(TREASURY.indexOf('PEGA') >= 0) fee = 0n;
   busy('sw-go', true); showBox('sw-msg','err','');
 
-  routerKind().then(function(kind){
-    var data;
-    if(kind === '02'){
+  Promise.all([routerKind(), findRoute(ti.addr, to.addr)]).then(function(o){
+    var kind = o[0], rt = o[1], data;
+    var dl = Math.floor(Date.now()/1000) + 1200;
+    if(rt.kind === 'path'){
+      data = kind === '02'
+        ? sel('exactInput((bytes,address,uint256,uint256))')
+          + enc(['tuple(bytes,address,uint256,uint256)'], [[rt.path, S.addr, units, minOut]])
+        : sel('exactInput((bytes,address,uint256,uint256,uint256))')
+          + enc(['tuple(bytes,address,uint256,uint256,uint256)'], [[rt.path, S.addr, dl, units, minOut]]);
+    } else if(kind === '02'){
       data = sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
            + enc(['tuple(address,address,uint24,address,uint256,uint256,uint160)'],
-                 [[ti.addr, to.addr, S.swap.fee.fee, S.addr, units, minOut, 0]]);
+                 [[ti.addr, to.addr, rt.fee, S.addr, units, minOut, 0]]);
     } else {
-      var dl = Math.floor(Date.now()/1000) + 1200;
       data = sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))')
            + enc(['tuple(address,address,uint24,address,uint256,uint256,uint256,uint160)'],
-                 [[ti.addr, to.addr, S.swap.fee.fee, S.addr, dl, units, minOut, 0]]);
+                 [[ti.addr, to.addr, rt.fee, S.addr, dl, units, minOut, 0]]);
     }
-    var approve = sel('approve(address,uint256)') + enc(['address','uint256'],[UNI_ROUTER, units]);
     var batch = [];
     if(fee > 0n){
-      batch.push({to: ti.addr, value:'0x0',
-        data: sel('transfer(address,uint256)') + enc(['address','uint256'],[TREASURY.toLowerCase(), fee])});
+      var T = TREASURY.toLowerCase();
+      batch.push(tx(ti.addr, 'transfer(address,uint256)', ['address','uint256'], [T, fee], 'transfer', [T, fee.toString()]));
     }
-    batch.push({to: ti.addr,    data: approve, value:'0x0'});
-    batch.push({to: UNI_ROUTER, data: data,    value:'0x0'});
-    return mkCall('sendTransaction', {transaction: batch});
+    batch.push(tx(ti.addr, 'approve(address,uint256)', ['address','uint256'], [UNI_ROUTER, units],
+                  'approve', [UNI_ROUTER, units.toString()]));
+    batch.push({to: UNI_ROUTER, data: data, _hi: rt.kind === 'path'
+      ? {address: UNI_ROUTER, abi: ABI.exactInput, functionName: 'exactInput',
+         args: [[rt.path, S.addr, units.toString(), minOut.toString()]]}
+      : {address: UNI_ROUTER, abi: ABI.exactInputSingle, functionName: 'exactInputSingle',
+         args: [[ti.addr, to.addr, rt.fee, S.addr, units.toString(), minOut.toString(), '0']]}});
+    return sendTx(batch);
   }).then(function(res){
-    var p = payload(res);
-    if(p && p.status === 'error') throw new Error(txError(p));
     showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ')+fmtAmt(amt)+' '+ti.sym+' → '+to.sym);
     $('sw-in').value=''; $('sw-out').value=''; S.swap.quote=0;
     completeMission('swap');
@@ -1934,12 +2108,10 @@ function doAds(){
     : 'Not enough funds: the plan costs ' + fmtAmt(plan.amount) + ' ' + tk.sym + ' and you have ' + fmtAmt(row.bal) + '.');
 
   var units = toUnits(plan.amount, tk.dec);
-  var data = sel('transfer(address,uint256)') + enc(['address','uint256'],[TREASURY.toLowerCase(), units]);
+  var T = TREASURY.toLowerCase();
   busy('ads-go', true); showBox('ads-msg','err','');
-  mkCall('sendTransaction', {transaction:[{to: tk.addr, data: data, value:'0x0'}]})
+  sendTx([tx(tk.addr, 'transfer(address,uint256)', ['address','uint256'], [T, units], 'transfer', [T, units.toString()])])
    .then(function(res){
-      var pl = payload(res);
-      if(pl && pl.status === 'error') throw new Error(txError(pl));
       var req = {name:name, tag:tag, link:link, contact:ct, hours:plan.hours,
                  pay:plan.pay, amount:plan.amount, wallet:S.addr, at:new Date().toISOString()};
       var all = [];
@@ -1957,6 +2129,25 @@ function doAds(){
 }
 
 /* ═══════════ diagnóstico ═══════════ */
+/* approve(router, 0) sobre WLD: no mueve fondos y dice si World App acepta firmar */
+function testSign(){
+  var L = LANG === 'es';
+  var wld = tokBySym('WLD');
+  if(!wld) return showBox('diag-out','err','No encuentro WLD.');
+  showBox('diag-out','ok', (L ? 'Pidiendo firma de prueba…' : 'Requesting test signature…'));
+  var t = tx(wld.addr, 'approve(address,uint256)', ['address','uint256'], [UNI_ROUTER, 0n], 'approve', [UNI_ROUTER, '0']);
+  var lineas = [];
+  withTimeout(mkCall('sendTransaction', {transaction: stripLow([t])}), 45000, L ? 'sin respuesta en 45 s' : 'no response in 45s')
+    .then(function(r){ var p = payload(r); lineas.push('to/data → ' + (p && p.status === 'error' ? txError(p) : (L ? 'aceptado' : 'accepted'))); })
+    .catch(function(e){ lineas.push('to/data → ' + (e.message || 'falla')); })
+    .then(function(){
+      return withTimeout(mkCall('sendTransaction', {transaction: [t._hi]}), 45000, L ? 'sin respuesta en 45 s' : 'no response in 45s')
+        .then(function(r){ var p = payload(r); lineas.push('abi → ' + (p && p.status === 'error' ? txError(p) : (L ? 'aceptado' : 'accepted'))); })
+        .catch(function(e){ lineas.push('abi → ' + (e.message || 'falla')); });
+    })
+    .then(function(){ showBox('diag-out','ok', lineas.map(esc).join('<br><br>')); });
+}
+
 function runDiag(){
   showBox('diag-out','ok', (LANG==='es'?'Probando…':'Testing…'));
   var lines = [];

@@ -269,7 +269,9 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
       <span><button class="btn mini ghost" onclick="setLang('es')">ES</button>
       <button class="btn mini ghost" onclick="setLang('en')">EN</button></span></div>
   </div>
-  <button class="btn ghost" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
+  <button class="btn" onclick="copiarWhitelist()">📋 Copiar direcciones para el portal</button>
+  <div id="wl-out"></div>
+  <button class="btn ghost" style="margin-top:10px" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
   <button class="btn ghost" style="margin-top:10px" onclick="testSign()">✍️ Probar firma</button>
   <label style="margin-top:16px">🔬 Analizar un swap que sí funcionó</label>
   <input class="inp" id="tx-hash" placeholder="0x… hash de la transacción" autocomplete="off" spellcheck="false">
@@ -419,7 +421,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b55';
+const BUILD = 'LW b57';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -1565,6 +1567,20 @@ function refrescarYa(){
   refreshAll(true).then(function(){ if(b) b.textContent = '↻'; });
 }
 function verOcultos(){ S.verOcultos = !S.verOcultos; safeRender(); }
+/* Junta todo lo que la app llega a tocar, para pegarlo de una vez en
+   Contract Entrypoints del Developer Portal. */
+function copiarWhitelist(){
+  var dirs = [UNI_ROUTER, V2_ROUTER, LOOT_ROUTER, PERMIT2];
+  (S.tokens || []).forEach(function(t){
+    if(t.addr && t.addr !== 'native' && dirs.indexOf(t.addr) < 0) dirs.push(t.addr);
+  });
+  var texto = dirs.join(', ');
+  copy(texto);
+  var L = LANG === 'es';
+  showBox('wl-out','ok', (L
+    ? 'Copiado: ' + dirs.length + ' direcciones (2 routers, tu LootRouter, Permit2 y tus ' + ((S.tokens || []).length) + ' tokens).<br><br>Pégalas en Developer Portal → Mini App → Permissions → Contract Entrypoints.<br><br>'
+    : 'Copied ' + dirs.length + ' addresses.<br><br>') + '<span class="mini" style="word-break:break-all">' + esc(texto) + '</span>');
+}
 function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Address copied'); }
 
 /* ═══════════ ficha del token ═══════════ */
@@ -2440,6 +2456,8 @@ function doSwap(){
         : 'Add these two under <b>Permit2 Tokens</b>:<br>• ' + esc(ti.addr) + '<br>• ' + esc(to.addr));
     } else if(/invalid_contract/i.test(msg)){
       msg += '<br><br>' + (LANG === 'es'
+        ? '👉 Falta autorizar alguno de estos. Usa el botón "Copiar direcciones para el portal" en Perfil.<br>'
+        : '👉 Use the "Copy addresses" button in Profile.<br>') + (LANG === 'es'
         ? 'En <b>Contract Entrypoints</b> deben estar:<br>• ' + UNI_ROUTER + ' (router V3)<br>• ' + V2_ROUTER + ' (router V2)<br>• ' + esc(ti.addr) + ' (' + esc(ti.sym) + ')<br>• ' + LOOT_ROUTER
         : 'Contract Entrypoints must include:<br>• ' + PERMIT2 + '<br>• ' + LOOT_ROUTER);
     }
@@ -2533,40 +2551,43 @@ function testSign(){
   var L = LANG === 'es';
   var wld = tokBySym('WLD');
   if(!wld || !S.addr) return showBox('diag-out','err','Conecta la wallet primero.');
-  showBox('diag-out','ok', (L ? 'Probando cada llamada por separado…' : 'Testing each call separately…'));
+  showBox('diag-out','ok', (L
+    ? 'Probando qué ventana de permiso acepta World App. Son permisos de 0,001 WLD sobre tu router, no mueven fondos. Confirma cada cartel que salga.'
+    : 'Testing which permit window World App accepts.'));
 
   var uno = toUnits('0.001', wld.dec);
-  var pruebas = [
-    {n: '1· Permit2.approve', t: tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-        ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, Math.floor(Date.now()/1000) + 1800],
-        'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), String(Math.floor(Date.now()/1000) + 1800)])},
-    {n: '2· LootRouter.swapSingle', t: tx(LOOT_ROUTER, 'swapSingle(address,address,uint24,uint256,uint256)',
-        ['address','address','uint24','uint256','uint256'],
-        [wld.addr, tokBySym('USDC').addr, 10000, uno, 0n],
-        'swapSingle', [wld.addr, tokBySym('USDC').addr, '10000', uno.toString(), '0'])},
-    {n: '3· WLD.transfer (a ti mismo)', t: tx(wld.addr, 'transfer(address,uint256)',
-        ['address','uint256'], [S.addr, 1n], 'transfer', [S.addr, '1'])}
-  ];
+  var ventanas = [3600, 1800, 600, 300, 120, 60, 30, 0];
   var lineas = [];
   function corre(i){
-    if(i >= pruebas.length){
-      showBox('diag-out','ok', lineas.map(esc).join('<br><br>'));
+    if(i >= ventanas.length){
+      lineas.push('———');
+      var buena = lineas.filter(function(l){ return l.indexOf('ACEPTADA') > 0; })[0];
+      lineas.push(buena ? '✅ usa la primera que diga ACEPTADA' : '❌ ninguna ventana pasó: Permit2 no es viable en esta versión de World App');
+      showBox('diag-out','ok', lineas.map(esc).join('<br>'));
       return;
     }
-    var pr = pruebas[i];
-    withTimeout(mkCall('sendTransaction', {transaction: [pr.t._hi], chainId: CHAIN_ID}), 40000,
-      L ? 'sin respuesta en 40 s' : 'no response in 40s')
+    var seg = ventanas[i];
+    var exp = seg === 0 ? 0 : Math.floor(Date.now() / 1000) + seg;
+    var t = tx(PERMIT2, 'approve(address,address,uint160,uint48)',
+      ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, exp],
+      'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), String(exp)]);
+    withTimeout(mkCall('sendTransaction', {chainId: CHAIN_ID, transactions: [{to: t.to, data: t.data}]}), 120000,
+      L ? 'sin respuesta' : 'no answer')
       .then(function(r){
-        var pl = payload(r) || {};
-        lineas.push(pr.n + ' → ' + (pl.status === 'error'
-          ? ((pl.error_code || pl.details || '?') + '')
-          : (L ? 'ACEPTADO' : 'ACCEPTED')));
+        if(txOk(r)){
+          lineas.push((seg ? seg + ' s' : 'expiración 0') + ' → ACEPTADA ✅');
+          try{ localStorage.setItem('loot.permitwin', String(seg)); }catch(e){}
+          showBox('diag-out','ok', lineas.map(esc).join('<br>') + '<br>———<br>✅ ventana buena encontrada: ' + (seg ? seg + ' s' : '0'));
+          return 'fin';
+        }
+        lineas.push((seg ? seg + ' s' : 'expiración 0') + ' → ' + txMotivo(r).slice(0, 60));
       })
-      .catch(function(er){ lineas.push(pr.n + ' → ' + (er.message || 'falla')); })
-      .then(function(){ corre(i + 1); });
+      .catch(function(er){ lineas.push((seg ? seg + ' s' : 'expiración 0') + ' → ' + (er.message || 'falla').slice(0, 60)); })
+      .then(function(x){ if(x !== 'fin') corre(i + 1); });
   }
   corre(0);
 }
+
 function runDiag(){
   var L = LANG === 'es';
   showBox('diag-out','ok', (L ? 'Probando…' : 'Testing…'));

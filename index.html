@@ -411,7 +411,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b25';
+const BUILD = 'LW b26';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -767,9 +767,15 @@ const ABI = {
     outputs:[{name:'amountOut',type:'uint256'}]}]
 };
 /* cada transacción lleva las dos formas: la cruda y la de ABI */
+/* MiniKit exige TODOS los argumentos como cadenas, aunque el ABI diga uint24 */
+function strArgs(a){
+  if(Array.isArray(a)) return a.map(strArgs);
+  if(typeof a === 'bigint' || typeof a === 'number') return a.toString();
+  return a;
+}
 function tx(addr, sig, types, values, fn, args){
   var o = {to: String(addr).toLowerCase(), data: sel(sig) + enc(types, values)};
-  if(fn && ABI[fn]) o._hi = {address: String(addr).toLowerCase(), abi: ABI[fn], functionName: fn, args: args};
+  if(fn && ABI[fn]) o._hi = {address: String(addr).toLowerCase(), abi: ABI[fn], functionName: fn, args: strArgs(args)};
   return o;
 }
 function toHigh(batch){
@@ -788,31 +794,38 @@ function withTimeout(pr, ms, msg){
   })]);
 }
 function sendTx(batch, ms){
-  var timeout = ms || 60000;
-  var noResp = LANG === 'es'
-    ? 'World App no respondió con el formato directo.'
-    : 'World App did not respond to the raw format.';
-  return withTimeout(mkCall('sendTransaction', {transaction: stripLow(batch)}), timeout, noResp)
-    .then(function(res){
-      var p = payload(res);
-      if(p && p.status === 'error') throw new Error(txError(p));
-      S.txMode = 'to/data';
-      return res;
-    })
-    .catch(function(e1){
-      /* segundo intento con {address, abi, functionName, args} */
-      var hi;
-      try{ hi = toHigh(batch); }catch(e){ throw e1; }
-      return withTimeout(mkCall('sendTransaction', {transaction: hi}), timeout, LANG === 'es'
-        ? 'World App no respondió con ninguno de los dos formatos. Revisa que TODAS las direcciones del lote estén en Contract Entrypoints.'
-        : 'World App did not respond to either format. Check that EVERY address in the batch is in Contract Entrypoints.')
-        .then(function(res){
-          var p = payload(res);
-          if(p && p.status === 'error') throw new Error(txError(p));
-          S.txMode = 'abi';
-          return res;
-        });
-    });
+  var timeout = ms || 35000;
+  var L = LANG === 'es';
+  var hi = null;
+  try{ hi = toHigh(batch); }catch(e){ hi = null; }
+
+  function intento(carga, etiqueta){
+    return withTimeout(mkCall('sendTransaction', carga), timeout,
+      (L ? 'World App no respondió al formato ' : 'World App did not answer format ') + etiqueta)
+      .then(function(res){
+        var p = payload(res);
+        if(p && p.status === 'error') throw new Error(txError(p));
+        S.txMode = etiqueta;
+        return res;
+      });
+  }
+  var primero = hi
+    ? intento({transaction: hi, chainId: CHAIN_ID}, 'abi')
+    : Promise.reject(new Error('sin ABI'));
+
+  return primero.catch(function(e1){
+    S.txErr1 = e1.message || String(e1);
+    /* algunas versiones esperan la lista cruda bajo otra clave */
+    var low = stripLow(batch);
+    return intento({transaction: low, chainId: CHAIN_ID}, 'to/data')
+      .catch(function(){ return intento({transactions: low, chainId: CHAIN_ID}, 'transactions'); })
+      .catch(function(e2){
+        throw new Error((L
+          ? 'World App no aceptó ninguno de los tres formatos. Primero: '
+          : 'World App rejected all three formats. First: ') + S.txErr1
+          + (L ? ' · Último: ' : ' · Last: ') + (e2.message || e2));
+      });
+  });
 }
 function payload(res){
   if(!res) return null;
@@ -1795,7 +1808,7 @@ function doSend(){
 }
 function busy(id, on, label){
   var b=$(id); if(!b) return;
-  if(on){ b.disabled=true; b.innerHTML='<span class="spin"></span>'; }
+  if(on){ b.disabled=true; b.innerHTML='<span class="spin"></span> ' + (LANG === 'es' ? 'Esperando a World App…' : 'Waiting for World App…'); }
   else { b.disabled=false; b.textContent = label || b.textContent; }
 }
 

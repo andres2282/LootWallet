@@ -411,7 +411,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b27';
+const BUILD = 'LW b29';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -578,18 +578,23 @@ function copy(txt){
 
 /* ═══════════ RPC ═══════════ */
 var rpcId = 1;
+function conTope(pr, ms){
+  return Promise.race([pr, new Promise(function(_, rej){
+    setTimeout(function(){ rej(new Error('RPC sin respuesta')); }, ms || 12000);
+  })]);
+}
 function rpcOne(url, method, params){
-  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+  return conTope(fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({jsonrpc:'2.0', id: rpcId++, method: method, params: params})})
    .then(function(r){ return r.json(); })
-   .then(function(j){ if(j.error) throw new Error(j.error.message||'rpc'); if(j.result===undefined) throw new Error('sin resultado'); return j.result; });
+   .then(function(j){ if(j.error) throw new Error(j.error.message||'rpc'); if(j.result===undefined) throw new Error('sin resultado'); return j.result; }), 12000);
 }
 function rpc(method, params){
   return Promise.any(RPCS.map(function(u){ return rpcOne(u, method, params); }));
 }
 /* varias lecturas en UNA sola petición: es lo que hace que la wallet abra rápido */
 function rpcBatchOne(url, reqs){
-  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reqs)})
+  return conTope(fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reqs)})
     .then(function(r){ return r.json(); })
     .then(function(j){
       if(!Array.isArray(j)) throw new Error('sin lotes');
@@ -600,7 +605,7 @@ function rpcBatchOne(url, reqs){
         if(!r || r.error || r.result === undefined) throw new Error('lote incompleto');
         return r.result;
       });
-    });
+    }), 12000);
 }
 function rpcBatch(reqs){
   if(!reqs.length) return Promise.resolve([]);
@@ -938,12 +943,27 @@ function getUsername(a){
   return Promise.resolve('');
 }
 
+/* fetch con tope de 12 s: sin esto una API que no responde deja la ficha en "Cargando…" para siempre */
+function jget(url, ms){
+  ms = ms || 12000;
+  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var to = setTimeout(function(){ if(ctrl) ctrl.abort(); }, ms);
+  var host = url.split('/')[2] || url;
+  return fetch(url, ctrl ? {signal: ctrl.signal} : {}).then(function(r){
+    clearTimeout(to);
+    if(!r.ok) throw new Error(host + ' → ' + r.status);
+    return r.json();
+  }, function(e){
+    clearTimeout(to);
+    throw new Error(host + ' → ' + ((e && e.name === 'AbortError') ? 'sin respuesta en 12 s' : (e.message || 'falla')));
+  });
+}
+
 /* ═══════════ saldos y precios ═══════════ */
 /* wallet universal: el explorador lista TODOS los ERC-20 que tiene la dirección */
 const EXPLORER = 'https://worldchain-mainnet.explorer.alchemy.com';
 function discoverTokens(){
-  return fetch(EXPLORER + '/api/v2/addresses/' + S.addr + '/token-balances')
-   .then(function(r){ if(!r.ok) throw new Error('explorador ' + r.status); return r.json(); })
+  return jget(EXPLORER + '/api/v2/addresses/' + S.addr + '/token-balances', 10000)
    .then(function(list){
       if(!Array.isArray(list)) throw new Error('respuesta inesperada del explorador');
       var out = [];
@@ -1025,8 +1045,7 @@ function loadPrices(){
   var best = {};
 
   var dex = Promise.all(chunks.map(function(c){
-    return fetch('https://api.dexscreener.com/latest/dex/tokens/' + c.join(','))
-      .then(function(r){ return r.json(); })
+    return jget('https://api.dexscreener.com/latest/dex/tokens/' + c.join(','), 8000)
       .then(function(j){
         ((j && j.pairs) || []).forEach(function(p){
           if(p.chainId !== 'worldchain') return;
@@ -1042,8 +1061,7 @@ function loadPrices(){
 
   /* GeckoTerminal: precio de respaldo y, sobre todo, el logo oficial del token */
   var gecko = Promise.all(chunks.map(function(c){
-    return fetch('https://api.geckoterminal.com/api/v2/networks/' + GECKO_NET + '/tokens/multi/' + c.join(','))
-      .then(function(r){ return r.json(); })
+    return jget('https://api.geckoterminal.com/api/v2/networks/' + GECKO_NET + '/tokens/multi/' + c.join(','), 8000)
       .then(function(j){
         ((j && j.data) || []).forEach(function(d){
           var at = d.attributes || {};
@@ -1096,6 +1114,8 @@ function refreshAll(showToast){
   if(!S.addr || busyLoad) return Promise.resolve();
   busyLoad = true;
   setLoading(true);
+  clearTimeout(S.loadGuard);
+  S.loadGuard = setTimeout(function(){ busyLoad = false; }, 30000);   /* si algo se cuelga, se desatasca solo */
   /* etapa 1: lo conocido, que son 5 lecturas y entra al instante */
   return verifyLootToken().then(loadBaseBalances).then(function(){
     safeRender();
@@ -1114,7 +1134,7 @@ function refreshAll(showToast){
   }).catch(function(){
     var el = $('total-sub');
     if(el) el.textContent = (LANG === 'es' ? 'No se pudo leer la cadena' : 'Could not read the chain');
-  }).then(function(){ busyLoad = false; });
+  }).then(function(){ busyLoad = false; clearTimeout(S.loadGuard); });
 }
 /* se refresca solo: al volver a la pestaña Wallet, al volver a la app y cada 60 s */
 setInterval(function(){
@@ -1387,21 +1407,6 @@ function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Addre
 
 /* ═══════════ ficha del token ═══════════ */
 const GT = 'https://api.geckoterminal.com/api/v2';
-/* fetch con tope de 12 s: sin esto una API que no responde deja la ficha en "Cargando…" para siempre */
-function jget(url, ms){
-  ms = ms || 12000;
-  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  var to = setTimeout(function(){ if(ctrl) ctrl.abort(); }, ms);
-  var host = url.split('/')[2] || url;
-  return fetch(url, ctrl ? {signal: ctrl.signal} : {}).then(function(r){
-    clearTimeout(to);
-    if(!r.ok) throw new Error(host + ' → ' + r.status);
-    return r.json();
-  }, function(e){
-    clearTimeout(to);
-    throw new Error(host + ' → ' + ((e && e.name === 'AbortError') ? 'sin respuesta en 12 s' : (e.message || 'falla')));
-  });
-}
 var TOK = {addr:'', mkt:'', sym:'', name:'', bal:0, px:0, pair:'', range:'24h', src:'', links:[]};
 function openToken(addr){
   var weth = tokBySym('WETH');
@@ -2119,10 +2124,10 @@ function doSwap(){
 
   findRoute(ti.addr, to.addr).then(function(rt){
     /* la comisión ya la cobra el contrato: se le manda el bruto */
-    var exp = Math.floor(Date.now()/1000) + 3600;
+    /* la expiración va en 0: World App la consume en la misma transacción */
     var batch = [tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-      ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, exp],
-      'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), String(exp)])];
+      ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, 0],
+      'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), '0'])];
 
     if(rt.kind === 'v2'){
       batch.push(tx(LOOT_ROUTER, 'swapV2(address,address,address,uint256,uint256)',
@@ -2148,9 +2153,11 @@ function doSwap(){
     var msg = esc(e.message || String(e));
     if(S.lastPayload) msg += '<br><br><span class="mini">' + esc(S.lastPayload) + '</span>';
     if(/autorizado|invalid_contract|no autorizada|validation/i.test(msg)){
-      msg += '<br><br>' + (LANG === 'es' ? 'Solo hacen falta estas dos en Contract Entrypoints:' : 'Only these two are needed in Contract Entrypoints:')
-        + '<br>• ' + PERMIT2 + ' (Permit2)'
-        + '<br>• ' + LOOT_ROUTER + ' (LootRouter)';
+      msg += '<br><br>' + (LANG === 'es'
+        ? 'Contract Entrypoints: ' + PERMIT2 + ' y ' + LOOT_ROUTER
+          + '<br><br>Y en <b>Permit2 Tokens</b> (es OTRA lista del portal) deben estar los tokens que mueves: ' + esc(ti.addr) + ' (' + esc(ti.sym) + ')'
+        : 'Contract Entrypoints: ' + PERMIT2 + ' and ' + LOOT_ROUTER
+          + '<br><br>And in <b>Permit2 Tokens</b> (a separate list) add the tokens you move: ' + esc(ti.addr));
     }
     showBox('sw-msg','err', msg);
   }).then(function(){ busy('sw-go', false, t('swapNow')); });
@@ -2244,12 +2251,11 @@ function testSign(){
   if(!wld || !S.addr) return showBox('diag-out','err','Conecta la wallet primero.');
   showBox('diag-out','ok', (L ? 'Probando cada llamada por separado…' : 'Testing each call separately…'));
 
-  var exp = Math.floor(Date.now()/1000) + 3600;
   var uno = toUnits('0.001', wld.dec);
   var pruebas = [
     {n: '1· Permit2.approve', t: tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-        ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, exp],
-        'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), String(exp)])},
+        ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, 0],
+        'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), '0'])},
     {n: '2· LootRouter.swapSingle', t: tx(LOOT_ROUTER, 'swapSingle(address,address,uint24,uint256,uint256)',
         ['address','address','uint24','uint256','uint256'],
         [wld.addr, tokBySym('USDC').addr, 10000, uno, 0n],

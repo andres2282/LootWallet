@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b36';
+const BUILD = 'LW b38';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -609,7 +609,13 @@ function rpcOne(url, method, params){
 function rpc(method, params){
   var vias = RPCS.map(function(u){ return rpcOne(u, method, params); });
   vias.unshift(rpcProveedor(method, params));
-  return Promise.any(vias);
+  return Promise.any(vias).catch(function(err){
+    /* AggregateError no dice nada: se saca el primer motivo real */
+    var e0 = (err && err.errors && err.errors.length) ? err.errors.find(function(x){
+      return x && x.message && !/sin proveedor|RPC sin respuesta/.test(x.message);
+    }) : null;
+    throw new Error((e0 && e0.message) || (err && err.errors && err.errors[0] && err.errors[0].message) || 'ningún RPC respondió');
+  });
 }
 /* varias lecturas en UNA sola petición: es lo que hace que la wallet abra rápido */
 function rpcBatchOne(url, reqs){
@@ -2119,7 +2125,7 @@ function findRoute(a, b){
     /* sin pool V3: se busca un par V2, que es donde viven muchos tokens viejos */
     return findV2Pair(a, b).then(function(v2){
       if(!v2) return null;
-      var r = {a:a, b:b, kind:'v2', pair: v2, fee: 30, label:'V2'};
+      var r = {a:a, b:b, kind:'v2', pair: v2, fee: 3000, v2fee: 30, label:'V2'};
       S.swap.route = r; return r;
     }).then(function(r){ if(r) return r; throw new Error('__seguir__'); });
   }).catch(function(e){
@@ -2175,8 +2181,22 @@ function doQuote(){
     var units = gross - fee;
     S.swap.gross = gross; S.swap.fee_ = fee; S.swap.net = units;
     if(rt.kind === 'v2'){
-      var dv = sel('quoteV2(address,address,uint256)') + enc(['address','address','uint256'], [ti.addr, rt.pair, gross]);
-      return ethCallFrom(LOOT_ROUTER, dv, S.addr).then(function(r){ return dec(['uint256'], r)[0]; });
+      /* se calcula con las reservas del propio par: no depende de nada más */
+      return Promise.all([
+        ethCall(rt.pair, sel('getReserves()')),
+        ethCall(rt.pair, sel('token0()'))
+      ]).then(function(o){
+        var d = String(o[0]).slice(2);
+        var r0 = BigInt('0x' + d.slice(0, 64));
+        var r1 = BigInt('0x' + d.slice(64, 128));
+        var t0 = ('0x' + String(o[1]).slice(-40)).toLowerCase();
+        var esCero = (t0 === ti.addr);
+        var rIn  = esCero ? r0 : r1;
+        var rOut = esCero ? r1 : r0;
+        if(rIn === 0n || rOut === 0n) throw new Error(LANG === 'es' ? 'El pool está vacío.' : 'The pool is empty.');
+        var conFee = units * BigInt(10000 - (rt.v2fee || 30));
+        return (conFee * rOut) / (rIn * 10000n + conFee);
+      });
     }
     if(rt.kind === 'single'){
       var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
@@ -2427,39 +2447,60 @@ function testSign(){
   corre(0);
 }
 function runDiag(){
-  showBox('diag-out','ok', (LANG==='es'?'Probando…':'Testing…'));
-  var lines = [];
-  var jobs = RPCS.map(function(u){
-    var t0 = Date.now();
-    return rpcOne(u, 'eth_blockNumber', [])
-      .then(function(b){ lines.push('✅ '+u.replace('https://','').split('/')[0]+' · '+(Date.now()-t0)+' ms · bloque '+parseInt(b,16)); })
-      .catch(function(e){ lines.push('❌ '+u.replace('https://','').split('/')[0]+' · '+(e.message||'falla')); });
-  });
-  Promise.all(jobs).then(function(){
-    return null;
-  }).then(function(){
-    lines.push(proveedor() ? '✅ proveedor de World App disponible' : '⚠️ sin proveedor inyectado');
-    lines.push((MK ? '✅ MiniKit cargado' : '❌ MiniKit no cargado') + (mkInstalled()?' · isInstalled sí':' · isInstalled no'));
-    MK_LOG.forEach(function(l){ lines.push('   '+l); });
-    showBox('diag-out','ok', lines.map(esc).join('<br>'));
-    lines.push('👛 '+(S.addr||'—'));
-    lines.push('🔀 LootRouter: ' + LOOT_ROUTER);
+  var L = LANG === 'es';
+  showBox('diag-out','ok', (L ? 'Probando…' : 'Testing…'));
+  var lineas = [];
+
+  function paso1(){
+    return Promise.all(RPCS.map(function(u){
+      var t0 = Date.now();
+      return rpcOne(u, 'eth_blockNumber', [])
+        .then(function(b){ lineas.push('✅ ' + u.replace('https://','').split('/')[0] + ' · ' + (Date.now() - t0) + ' ms · bloque ' + parseInt(b, 16)); })
+        .catch(function(e){ lineas.push('❌ ' + u.replace('https://','').split('/')[0] + ' · ' + (e.message || 'falla')); });
+    }));
+  }
+  function paso2(){
+    lineas.push(proveedor() ? '✅ proveedor de World App disponible' : '⚠️ sin proveedor inyectado');
+    lineas.push((MK ? '✅ MiniKit cargado' : '❌ MiniKit no cargado') + (mkInstalled() ? ' · isInstalled sí' : ' · isInstalled no'));
+    lineas.push('👛 ' + (S.addr || '—'));
+    return Promise.resolve();
+  }
+  function paso3(){
+    lineas.push('———');
+    lineas.push('🔀 LootRouter: ' + LOOT_ROUTER);
     return ethCall(LOOT_ROUTER, sel('UNI()')).then(function(r){
-      var uni = '0x' + String(r).slice(-40);
-      lines.push('   apunta a Uniswap: ' + uni);
+      var uni = ('0x' + String(r).slice(-40)).toLowerCase();
+      lineas.push('   apunta a Uniswap: ' + uni);
       return rpc('eth_getCode', [uni, 'latest']).then(function(code){
-        lines.push('   ¿tiene código?: ' + (code && code.length > 4 ? 'sí (' + ((code.length - 2) / 2) + ' bytes)' : '❌ NO — dirección vacía'));
+        var bytes = (code && code.length > 4) ? ((code.length - 2) / 2) : 0;
+        lineas.push('   ¿tiene código?: ' + (bytes ? 'sí, ' + bytes + ' bytes' : '❌ NO — dirección vacía'));
+        if(!bytes) return;
         return ethCall(uni, sel('factory()'))
-          .then(function(f){ lines.push('   factory(): ' + '0x' + String(f).slice(-40) + ' → es un router de Uniswap ✅'); })
-          .catch(function(){ lines.push('   factory(): ❌ no responde → NO es un SwapRouter'); });
+          .then(function(f){ lineas.push('   factory(): 0x' + String(f).slice(-40) + ' ✅ es un router de Uniswap'); })
+          .catch(function(){ lineas.push('   factory(): ❌ no responde → NO es un SwapRouter'); });
       });
-    }).catch(function(e){ lines.push('   ⚠️ no pude leer el router: ' + (e.message || '')); })
-    .then(function(){
-      return ethCallFrom(LOOT_ROUTER, sel('feeFor(address)') + enc(['address'],[S.addr]), S.addr)
-        .then(function(r){ lines.push('   comisión que te aplica: ' + (Number(dec(['uint16'], r)[0]) / 100) + '%'); })
-        .catch(function(e){ lines.push('   ⚠️ feeFor no responde: ' + (e.message || '')); });
-    });
-    showBox('diag-out','ok', lines.map(esc).join('<br>'));
+    }).catch(function(e){ lineas.push('   ⚠️ no pude leer UNI(): ' + (e.message || '')); });
+  }
+  function paso4(){
+    if(!S.addr) return Promise.resolve();
+    return ethCallFrom(LOOT_ROUTER, sel('feeFor(address)') + enc(['address'],[S.addr]), S.addr)
+      .then(function(r){ lineas.push('   comisión que te aplica: ' + (Number(dec(['uint16'], r)[0]) / 100) + '%'); })
+      .catch(function(e){ lineas.push('   ⚠️ feeFor: ' + (e.message || '')); });
+  }
+  function paso5(){
+    var wld = tokBySym('WLD'), usdc = tokBySym('USDC');
+    if(!wld || !usdc) return Promise.resolve();
+    lineas.push('———');
+    var d = sel('getPool(address,address,uint24)') + enc(['address','address','uint24'],[wld.addr, usdc.addr, 3000]);
+    return ethCall(UNI_FACTORY, d).then(function(r){
+      var pool = '0x' + String(r).slice(-40);
+      lineas.push('🏊 pool WLD/USDC 0.3%: ' + (/^0x0{40}$/i.test(pool) ? 'no existe' : pool));
+    }).catch(function(e){ lineas.push('🏊 factory de Uniswap: ' + (e.message || 'falla')); });
+  }
+
+  paso1().then(paso2).then(paso3).then(paso4).then(paso5).then(function(){
+    MK_LOG.forEach(function(l){ lineas.push('   ' + l); });
+    showBox('diag-out','ok', lineas.map(esc).join('<br>'));
   });
 }
 

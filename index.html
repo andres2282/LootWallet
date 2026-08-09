@@ -269,6 +269,11 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
       <span><button class="btn mini ghost" onclick="setLang('es')">ES</button>
       <button class="btn mini ghost" onclick="setLang('en')">EN</button></span></div>
   </div>
+  <div class="card">
+    <div class="between"><b>🧪 Modo simple (sin comisión)</b>
+      <button class="btn mini ghost" id="btn-simple" onclick="alternarSimple()">—</button></div>
+    <p style="margin-top:8px">Manda el swap en 2 transacciones en vez de 3, saltándose el cobro de la comisión. Sirve para saber si lo que traba a World App es el lote de 3.</p>
+  </div>
   <button class="btn" onclick="copiarWhitelist()">📋 Copiar direcciones para el portal</button>
   <div id="wl-out"></div>
   <button class="btn ghost" style="margin-top:10px" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
@@ -421,7 +426,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b57';
+const BUILD = 'LW b58';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -930,6 +935,7 @@ function txError(p){
 var S = {
   addr:'', user:'', tokens:[], eth:0, prices:{}, totalUsd:0,
   discErr:'', pick:'', send:{tok:null}, swap:{in:'WLD', out:'USDC', fee:null, quote:0, slip:5},
+  sinComision: (localStorage.getItem('loot.simple') === '1'),
   pts: parseInt(localStorage.getItem('loot.pts')||'0', 10),
   done: JSON.parse(localStorage.getItem('loot.missions')||'{}'),
   earnTab:'air', adsPlan:0, view:'wallet', busy:false
@@ -1230,7 +1236,7 @@ function lootBal(){
   return r ? r.bal : 0;
 }
 function isHolder(){ return lootBal() >= LOOT_HOLD_MIN; }
-function feeBps(){ return isHolder() ? FEE_BPS_HOLDER : FEE_BPS; }
+function feeBps(){ if(S.sinComision) return 0; return isHolder() ? FEE_BPS_HOLDER : FEE_BPS; }
 function feeTxt(){ return (feeBps() / 100).toFixed(2).replace(/0$/, '') + '%'; }
 var busyLoad = false;
 function setLoading(on){
@@ -1550,6 +1556,7 @@ function renderProfile(){
   $('p-addr').textContent = S.addr || '—';
   $('p-pts').textContent = S.pts;
   $('p-build').textContent = BUILD;
+  pintarSimple();
   var warn = '';
   if(LOOT_APP_ID.indexOf('PEGA')>=0) warn += (LANG==='es'
     ? 'Falta poner el App ID de la Mini App en la constante LOOT_APP_ID.'
@@ -1569,6 +1576,18 @@ function refrescarYa(){
 function verOcultos(){ S.verOcultos = !S.verOcultos; safeRender(); }
 /* Junta todo lo que la app llega a tocar, para pegarlo de una vez en
    Contract Entrypoints del Developer Portal. */
+function alternarSimple(){
+  S.sinComision = !S.sinComision;
+  try{ localStorage.setItem('loot.simple', S.sinComision ? '1' : '0'); }catch(e){}
+  pintarSimple();
+  toast(S.sinComision ? (LANG === 'es' ? 'Comisión desactivada' : 'Fee off') : (LANG === 'es' ? 'Comisión activada' : 'Fee on'));
+}
+function pintarSimple(){
+  var b = $('btn-simple'); if(!b) return;
+  b.textContent = S.sinComision ? 'ACTIVADO' : 'apagado';
+  b.style.borderColor = S.sinComision ? 'var(--grn)' : 'var(--line)';
+  b.style.color = S.sinComision ? 'var(--grn)' : 'var(--mut)';
+}
 function copiarWhitelist(){
   var dirs = [UNI_ROUTER, V2_ROUTER, LOOT_ROUTER, PERMIT2];
   (S.tokens || []).forEach(function(t){

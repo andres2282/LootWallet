@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b46';
+const BUILD = 'LW b48';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -845,7 +845,8 @@ function withTimeout(pr, ms, msg){
   })]);
 }
 function sendTx(batch, ms){
-  var timeout = ms || 15000;
+  /* firmar depende de que TÚ toques el botón: no se puede cortar a los 15 s */
+  var timeout = ms || 180000;
   var L = LANG === 'es';
   var low = stripLow(batch);
   var hi = null;
@@ -863,9 +864,7 @@ function sendTx(batch, ms){
   /* v2 usa {transactions:[{to,data}]}; v1 usa {transaction:[{address,abi,...}]} */
   /* el primero es el formato exacto que funciona en EggChain */
   var pasos = [
-    function(){ return intento({chainId: CHAIN_ID, transactions: low}, 'transactions+to/data'); },
-    function(){ return intento({chainId: CHAIN_ID, transaction: stripV2(batch)}, 'transaction+address'); },
-    function(){ return hi ? intento({chainId: CHAIN_ID, transaction: hi}, 'abi') : Promise.reject(new Error('sin ABI')); }
+    function(){ return intento({chainId: CHAIN_ID, transactions: low}, 'ok'); }
   ];
   var fallos = [];
   function siguiente(i){
@@ -902,6 +901,8 @@ function txError(p){
   try{ S.lastPayload = JSON.stringify(p).slice(0, 400); }catch(e){}
   var c = p.error_code || p.errorCode || p.details || p.status;
   var map = {
+    invalid_token: 'Ese token no está en la lista "Permit2 Tokens" del Developer Portal. Agrégalo ahí (Mini App → Permissions) y vuelve a intentar.',
+    user_rejected: 'Cancelaste la firma.',
     invalid_contract: 'Ese contrato no está autorizado. Agrégalo en Developer Portal → Mini App → Permissions → Contract Entrypoints.',
     invalid_operation:'World App rechazó la operación. Suele ser un contrato o token sin dar de alta en el portal.',
     user_rejected:    'Cancelaste la firma.',
@@ -1982,7 +1983,7 @@ function doSend(){
 }
 function busy(id, on, label){
   var b=$(id); if(!b) return;
-  if(on){ b.disabled=true; b.innerHTML='<span class="spin"></span> ' + (LANG === 'es' ? 'Esperando a World App…' : 'Waiting for World App…'); }
+  if(on){ b.disabled=true; b.innerHTML='<span class="spin"></span> ' + (LANG === 'es' ? 'Confirma en World App…' : 'Confirm in World App…'); }
   else { b.disabled=false; b.textContent = label || b.textContent; }
 }
 
@@ -2348,17 +2349,18 @@ function doSwap(){
     }
 
     S.lastRouter = {addr: LOOT_ROUTER, kind: rt.kind};
-    /* primero la vía con menos piezas: approve normal + Uniswap directo */
-    var primera = B ? sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
-                    : Promise.reject(new Error('ruta V2: solo por router'));
-    return primera.catch(function(e1){
-      S.errA = (e1.message || String(e1)).slice(0, 160);
-      return sendTx(A).then(function(r){ S.via = 'LootRouter+Permit2'; return r; })
-        .catch(function(e2){
-          throw new Error((LANG === 'es' ? 'Vía Uniswap: ' : 'Uniswap path: ') + S.errA
-            + (LANG === 'es' ? ' — Vía router: ' : ' — Router path: ') + (e2.message || e2));
-        });
-    });
+    /* tu router va primero: es la vía que llega a la firma y cobra la comisión on-chain */
+    return sendTx(A).then(function(r){ S.via = 'LootRouter'; return r; })
+      .catch(function(e1){
+        var m1 = (e1.message || String(e1));
+        if(!B || /user_rejected/i.test(m1)) throw e1;
+        S.errA = m1.slice(0, 140);
+        return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
+          .catch(function(e2){
+            throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router: ') + S.errA
+              + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap: ') + (e2.message || e2));
+          });
+      });
   }).then(function(res){
     showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ') + fmtAmt(amt) + ' ' + ti.sym + ' → ' + to.sym
       + (S.via ? ' · ' + esc(S.via) : '') + (S.txMode ? ' · ' + esc(S.txMode) : ''));
@@ -2368,12 +2370,14 @@ function doSwap(){
   }).catch(function(e){
     var msg = esc(e.message || String(e));
     if(S.lastPayload) msg += '<br><br><span class="mini">' + esc(S.lastPayload) + '</span>';
-    if(/autorizado|invalid_contract|no autorizada|validation/i.test(msg)){
+    if(/invalid_token/i.test(msg)){
       msg += '<br><br>' + (LANG === 'es'
-        ? 'Contract Entrypoints: ' + PERMIT2 + ' y ' + LOOT_ROUTER
-          + '<br><br>Y en <b>Permit2 Tokens</b> (es OTRA lista del portal) deben estar los tokens que mueves: ' + esc(ti.addr) + ' (' + esc(ti.sym) + ')'
-        : 'Contract Entrypoints: ' + PERMIT2 + ' and ' + LOOT_ROUTER
-          + '<br><br>And in <b>Permit2 Tokens</b> (a separate list) add the tokens you move: ' + esc(ti.addr));
+        ? 'Agrega estos dos en <b>Permit2 Tokens</b> del portal:<br>• ' + esc(ti.addr) + ' (' + esc(ti.sym) + ')<br>• ' + esc(to.addr) + ' (' + esc(to.sym) + ')'
+        : 'Add these two under <b>Permit2 Tokens</b>:<br>• ' + esc(ti.addr) + '<br>• ' + esc(to.addr));
+    } else if(/invalid_contract/i.test(msg)){
+      msg += '<br><br>' + (LANG === 'es'
+        ? 'En <b>Contract Entrypoints</b> deben estar:<br>• ' + PERMIT2 + '<br>• ' + LOOT_ROUTER
+        : 'Contract Entrypoints must include:<br>• ' + PERMIT2 + '<br>• ' + LOOT_ROUTER);
     }
     showBox('sw-msg','err', msg);
   }).then(function(){ busy('sw-go', false, t('swapNow')); });

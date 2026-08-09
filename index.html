@@ -271,6 +271,11 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
   </div>
   <button class="btn ghost" onclick="runDiag()" data-i18n="diag">🔧 Probar conexión</button>
   <button class="btn ghost" style="margin-top:10px" onclick="testSign()">✍️ Probar firma</button>
+  <label style="margin-top:16px">🔬 Analizar un swap que sí funcionó</label>
+  <input class="inp" id="tx-hash" placeholder="0x… hash de la transacción" autocomplete="off" spellcheck="false">
+  <button class="btn ghost" style="margin-top:10px" onclick="analizarTx()">Analizar este hash</button>
+  <button class="btn" style="margin-top:10px" onclick="buscarMiSwap()">🔎 Buscar mi último swap solo</button>
+  <div id="tx-out"></div>
   <div id="diag-out"></div>
   <div class="note" style="margin-top:14px">
     <b>Build <span id="p-build"></span></b><br>
@@ -414,7 +419,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b49';
+const BUILD = 'LW b52';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -2320,16 +2325,19 @@ function doSwap(){
         'swapSingle', [ti.addr, to.addr, rt.fee, gross.toString(), minOut.toString()]);
     }
 
-    /* A: Permit2 + nuestro router (la comisión la cobra el contrato).
-       La expiración NO puede ir en 0: Permit2 compara con block.timestamp y
-       una aprobación con expiración 0 ya está vencida, así que revierte. */
-    var exp = Math.floor(Date.now() / 1000) + 1800;
-    var A = [
-      tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-        ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, exp],
-        'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), String(exp)]),
-      llamadaRouter()
-    ];
+    /* La expiración del permiso tiene un máximo que World App no documenta:
+       con 0 revierte al simular y con 1800 responde permit_deadline_too_long.
+       Se prueban valores cortos de mayor a menor hasta que uno pase. */
+    function loteA(seg){
+      var exp = seg === 0 ? 0 : Math.floor(Date.now() / 1000) + seg;
+      return [
+        tx(PERMIT2, 'approve(address,address,uint160,uint48)',
+          ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, exp],
+          'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), String(exp)]),
+        llamadaRouter()
+      ];
+    }
+    var VENTANAS = [300, 60, 30, 0];
 
     /* B: approve normal + Uniswap directo, por si World App aún bloquea Permit2 */
     var B = null;
@@ -2352,18 +2360,40 @@ function doSwap(){
     }
 
     S.lastRouter = {addr: LOOT_ROUTER, kind: rt.kind};
-    /* tu router va primero: es la vía que llega a la firma y cobra la comisión on-chain */
-    return sendTx(A).then(function(r){ S.via = 'LootRouter'; return r; })
-      .catch(function(e1){
-        var m1 = (e1.message || String(e1));
-        if(!B || /user_rejected/i.test(m1)) throw e1;
-        S.errA = m1.slice(0, 140);
-        return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
-          .catch(function(e2){
-            throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router: ') + S.errA
-              + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap: ') + (e2.message || e2));
-          });
+
+    function porRouter(i){
+      if(i >= VENTANAS.length) return Promise.reject(new Error('permit_deadline: ninguna ventana aceptada'));
+      var seg = VENTANAS[i];
+      return sendTx(loteA(seg)).then(function(r){
+        S.via = 'LootRouter (permiso ' + (seg ? seg + 's' : '0') + ')';
+        try{ localStorage.setItem('loot.permitwin', String(seg)); }catch(e){}
+        return r;
+      }).catch(function(e){
+        var m = e.message || String(e);
+        /* solo reintenta si el problema es la ventana del permiso */
+        if(/deadline_too_long|permit_deadline/i.test(m)) return porRouter(i + 1);
+        throw e;
       });
+    }
+    /* si en un intento anterior ya se supo qué ventana acepta, se usa esa primero */
+    try{
+      var guardada = parseInt(localStorage.getItem('loot.permitwin'), 10);
+      if(isFinite(guardada)){
+        var k = VENTANAS.indexOf(guardada);
+        if(k > 0){ VENTANAS.splice(k, 1); VENTANAS.unshift(guardada); }
+      }
+    }catch(e){}
+
+    return porRouter(0).catch(function(e1){
+      var m1 = (e1.message || String(e1));
+      if(!B || /user_rejected/i.test(m1)) throw e1;
+      S.errA = m1.slice(0, 140);
+      return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
+        .catch(function(e2){
+          throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router: ') + S.errA
+            + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap: ') + (e2.message || e2));
+        });
+    });
   }).then(function(res){
     showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ') + fmtAmt(amt) + ' ' + ti.sym + ' → ' + to.sym
       + (S.via ? ' · ' + esc(S.via) : '') + (S.txMode ? ' · ' + esc(S.txMode) : ''));
@@ -2561,6 +2591,96 @@ function runDiag(){
   paso1().then(paso2).then(paso3).then(paso4).then(paso5).then(function(){
     MK_LOG.forEach(function(l){ lineas.push('   ' + l); });
     showBox('diag-out','ok', lineas.map(esc).join('<br>'));
+  });
+}
+
+/* Busca en el explorador el último swap real de esta wallet y lo analiza.
+   Un swap se reconoce porque en la MISMA transacción sale un token y entra otro. */
+function buscarMiSwap(){
+  if(!S.addr) return showBox('tx-out','err','Conecta la wallet primero.');
+  showBox('tx-out','ok','Buscando tus últimos movimientos…');
+  jget(EXPLORER + '/api/v2/addresses/' + S.addr + '/token-transfers?type=ERC-20', 12000).then(function(j){
+    var items = (j && j.items) || [];
+    if(!items.length) throw new Error('el explorador no devolvió movimientos');
+    var porTx = {};
+    items.forEach(function(it){
+      var hx = it.transaction_hash || it.tx_hash;
+      if(!hx) return;
+      var de = String((it.from && it.from.hash) || '').toLowerCase();
+      var a  = String((it.to && it.to.hash) || '').toLowerCase();
+      var tk = String((it.token && it.token.address) || '').toLowerCase();
+      porTx[hx] = porTx[hx] || {sale: {}, entra: {}, cuando: it.timestamp};
+      if(de === S.addr) porTx[hx].sale[tk] = (it.token && it.token.symbol) || tk;
+      if(a === S.addr)  porTx[hx].entra[tk] = (it.token && it.token.symbol) || tk;
+    });
+    var candidatos = Object.keys(porTx).filter(function(hx){
+      var g = porTx[hx];
+      var s = Object.keys(g.sale), e = Object.keys(g.entra);
+      return s.length && e.length && s[0] !== e[0];
+    });
+    if(!candidatos.length) throw new Error('no encontré ningún swap en tus últimos movimientos. Haz uno en Ani Wallet y vuelve a intentar.');
+    var elegido = candidatos[0];
+    var g = porTx[elegido];
+    showBox('tx-out','ok', 'Swap encontrado: ' + esc(Object.values(g.sale).join(',')) + ' → '
+      + esc(Object.values(g.entra).join(',')) + '<br>' + esc(elegido) + '<br><br>Analizando…');
+    $('tx-hash').value = elegido;
+    setTimeout(analizarTx, 400);
+  }).catch(function(e){
+    showBox('tx-out','err', esc(e.message || e));
+  });
+}
+
+/* Radiografía de una transacción ajena: sirve para copiar el patrón exacto
+   de un swap que sí funciona dentro de World App (Ani, PUF, etc.). */
+const EVENTOS = {
+  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef': 'Transfer',
+  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925': 'Approval',
+  '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67': 'Swap V3',
+  '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822': 'Swap V2',
+  '0xda9fa7c1b00402c17d0161b249b1ab8bbec047c5a52207b9c112deffd817036b': 'Permit2 Approval'
+};
+function analizarTx(){
+  var hx = ($('tx-hash').value || '').trim();
+  if(!/^0x[0-9a-fA-F]{64}$/.test(hx)) return showBox('tx-out','err','Pega un hash válido (0x + 64 caracteres).');
+  showBox('tx-out','ok','Leyendo la transacción…');
+  Promise.all([
+    rpc('eth_getTransactionReceipt', [hx]),
+    rpc('eth_getTransactionByHash', [hx])
+  ]).then(function(o){
+    var rec = o[0], txx = o[1];
+    if(!rec) throw new Error('no encontrada');
+    var L = [];
+    L.push('destino de la tx: ' + (txx && txx.to ? txx.to : '—'));
+    L.push('estado: ' + (rec.status === '0x1' ? '✅ exitosa' : '❌ revertida'));
+    L.push('eventos: ' + (rec.logs || []).length);
+    L.push('———');
+    var routers = {}, spenders = {};
+    (rec.logs || []).forEach(function(lg){
+      var nombre = EVENTOS[(lg.topics && lg.topics[0]) || ''] || '';
+      if(!nombre) return;
+      var linea = nombre + ' @ ' + lg.address;
+      if(nombre.indexOf('Swap') === 0 && lg.topics[1]){
+        var quien = '0x' + lg.topics[1].slice(-40);
+        routers[quien] = (routers[quien] || 0) + 1;
+        linea += '  ← ejecutado por ' + quien;
+      }
+      if(nombre.indexOf('Approval') >= 0 && lg.topics[2]){
+        var sp = '0x' + lg.topics[2].slice(-40);
+        spenders[sp] = (spenders[sp] || 0) + 1;
+        linea += '  → permiso a ' + sp;
+      }
+      L.push(linea);
+    });
+    L.push('———');
+    var rs = Object.keys(routers);
+    L.push(rs.length ? '🔀 ROUTER USADO: ' + rs.join(', ') : '🔀 no se detectó router (¿no fue un swap?)');
+    var ss = Object.keys(spenders);
+    if(ss.length) L.push('🔑 permisos dados a: ' + ss.join(', '));
+    L.push(ss.some(function(x){ return x.toLowerCase() === PERMIT2; })
+      ? '📌 usó Permit2' : '📌 NO usó Permit2 (approve normal)');
+    showBox('tx-out','ok', L.map(esc).join('<br>'));
+  }).catch(function(e){
+    showBox('tx-out','err','No se pudo leer: ' + esc(e.message || e));
   });
 }
 

@@ -214,7 +214,8 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
 
   <div class="sec between">
     <span data-i18n="myTokens">Mis tokens</span>
-    <button class="mini" style="letter-spacing:0;text-transform:none" onclick="openAddToken()" data-i18n="addToken">+ Agregar token</button>
+    <span><button class="mini" id="btn-ocultos" style="letter-spacing:0;text-transform:none" onclick="verOcultos()"></button>
+    <button class="mini" style="letter-spacing:0;text-transform:none;margin-left:12px" onclick="openAddToken()" data-i18n="addToken">+ Agregar token</button></span>
   </div>
   <div id="list-tokens"></div>
 </main>
@@ -394,7 +395,8 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
   <div class="mini" id="tk-chartmsg" style="margin-top:8px"></div>
   <div class="card" id="tk-stats" style="margin-top:12px"></div>
   <div id="tk-social"></div>
-  <div style="display:flex;gap:10px;margin-top:14px">
+  <button class="btn ghost" style="margin-top:14px" id="tk-hide" onclick="ocultarToken()"></button>
+  <div style="display:flex;gap:10px;margin-top:10px">
     <button class="btn" style="flex:1" onclick="swapFromToken()">💱 Swap</button>
     <button class="btn ghost" style="flex:1" onclick="sendFromToken()">📤 <span data-i18n="send">Enviar</span></button>
   </div>
@@ -411,12 +413,26 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b31';
+const BUILD = 'LW b34';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
 const CHAIN_ID = 480;
+/* Dentro de World App hay un proveedor inyectado: es la vía más rápida y no
+   depende de que los RPC públicos acepten peticiones desde el navegador. */
+function proveedor(){
+  return window.ethereum || (MK && MK.provider) || null;
+}
+function rpcProveedor(method, params){
+  var pv = proveedor();
+  if(!pv || typeof pv.request !== 'function') return Promise.reject(new Error('sin proveedor'));
+  return conTope(pv.request({method: method, params: params}), 9000).then(function(r){
+    if(r === undefined || r === null) throw new Error('sin resultado');
+    return r;
+  });
+}
 const RPCS = [
+  'https://worldchain-mainnet.explorer.alchemy.com/api/eth-rpc',
   'https://worldchain-mainnet.g.alchemy.com/public',
   'https://480.rpc.thirdweb.com',
   'https://worldchain-mainnet.gateway.tenderly.co',
@@ -590,7 +606,9 @@ function rpcOne(url, method, params){
    .then(function(j){ if(j.error) throw new Error(j.error.message||'rpc'); if(j.result===undefined) throw new Error('sin resultado'); return j.result; }), 12000);
 }
 function rpc(method, params){
-  return Promise.any(RPCS.map(function(u){ return rpcOne(u, method, params); }));
+  var vias = RPCS.map(function(u){ return rpcOne(u, method, params); });
+  vias.unshift(rpcProveedor(method, params));
+  return Promise.any(vias);
 }
 /* varias lecturas en UNA sola petición: es lo que hace que la wallet abra rápido */
 function rpcBatchOne(url, reqs){
@@ -639,7 +657,11 @@ const SELS = {
 function sel(sig){ return SELS[sig] || ethers.id(sig).slice(0,10); }
 function enc(types, values){ return ethers.AbiCoder.defaultAbiCoder().encode(types, values).slice(2); }
 function dec(types, data){ return ethers.AbiCoder.defaultAbiCoder().decode(types, data); }
-function ethCall(to, data){ return rpc('eth_call', [{to: to.toLowerCase(), data: data}, 'latest']); }
+function ethCall(to, data){
+  return rpc('eth_call', [{to: to.toLowerCase(), data: data}, 'latest'])
+    .then(function(r){ S.rpcFalla = false; return r; })
+    .catch(function(e){ S.rpcFalla = true; throw e; });
+}
 function ethCallFrom(to, data, from){
   return rpc('eth_call', [{to: to.toLowerCase(), data: data, from: (from || '').toLowerCase()}, 'latest']);
 }
@@ -872,6 +894,16 @@ function completeMission(id){
   S.done[id]=true; S.pts += m.pts; saveMissions();
   toast('🎯 +'+m.pts+' LOOT Points');
   renderMissions(); renderProfile();
+}
+var HIDDEN = [];
+try{ HIDDEN = JSON.parse(localStorage.getItem('loot.hidden') || '[]'); }catch(e){ HIDDEN = []; }
+function estaOculto(a){ return HIDDEN.indexOf(String(a).toLowerCase()) >= 0; }
+function alternarOculto(a){
+  a = String(a).toLowerCase();
+  var i = HIDDEN.indexOf(a);
+  if(i >= 0) HIDDEN.splice(i, 1); else HIDDEN.push(a);
+  try{ localStorage.setItem('loot.hidden', JSON.stringify(HIDDEN)); }catch(e){}
+  return i < 0;
 }
 function customTokens(){
   try{ return JSON.parse(localStorage.getItem('loot.custom')||'[]'); }catch(e){ return []; }
@@ -1132,26 +1164,29 @@ function refreshAll(showToast){
   clearTimeout(S.loadGuard);
   S.loadGuard = setTimeout(function(){ busyLoad = false; }, 30000);
 
-  /* etapa 1: el explorador devuelve TODA la cartera en una sola petición */
   return verifyLootToken().then(function(){
-    return discoverTokens().then(function(l){ S.discErr = ''; return l; })
-      .catch(function(e){ S.discErr = e.message || 'sin respuesta'; return []; });
-  }).then(function(disc){
-    if(disc && disc.length){
-      var map = {};
-      disc.forEach(function(t){ map[t.addr] = t; });
-      allTokens().forEach(function(tk){
-        map[tk.addr] = Object.assign({}, tk, {bal: (map[tk.addr] && map[tk.addr].bal) || 0, base: true});
-      });
-      S.tokens = Object.keys(map).map(function(k){ return map[k]; });
+    /* las dos fuentes salen a la vez y gana la que llegue primero */
+    var porRpc = loadBaseBalances().then(function(){
       safeRender();
       loadPrices().then(safeRender).catch(function(){});
-    }
-    /* etapa 2: el RPC confirma y afina, pero ya no bloquea nada */
-    return loadBaseBalances().catch(function(){});
-  }).then(function(){
-    safeRender();
-    return loadPrices().catch(function(){});
+    }).catch(function(){});
+
+    var porExplorador = discoverTokens().then(function(disc){
+      S.discErr = '';
+      if(disc && disc.length){
+        mergeDiscovered(disc);
+        /* los base que el RPC no pudo leer se rellenan con el explorador */
+        var porDir = {};
+        disc.forEach(function(t){ porDir[t.addr] = t; });
+        S.tokens.forEach(function(t){
+          if((t.failed || !t.bal) && porDir[t.addr] && porDir[t.addr].bal > 0) t.bal = porDir[t.addr].bal;
+        });
+        safeRender();
+        return loadPrices().then(safeRender).catch(function(){});
+      }
+    }).catch(function(e){ S.discErr = e.message || 'sin respuesta'; });
+
+    return Promise.all([porRpc, porExplorador]);
   }).then(function(){
     safeRender();
     var wld = S.tokens.filter(function(x){ return x.sym === 'WLD'; })[0];
@@ -1172,7 +1207,11 @@ document.addEventListener('visibilitychange', function(){
 });
 
 /* ═══════════ render ═══════════ */
-function safeRender(){ try{ renderWallet(); }catch(e){
+function safeRender(){ try{
+  renderWallet();
+  if(!$('sh-send').classList.contains('hidden')) renderSendTok();
+  if(!$('sh-swap').classList.contains('hidden')) renderSwap();
+}catch(e){
   var el = $('list-tokens');
   if(el) el.innerHTML = '<div class="err">' + esc(e.message || String(e)) + '</div>';
 } }
@@ -1196,7 +1235,8 @@ function renderWallet(){
   var rows = S.tokens.map(function(tk){
     var px = S.prices[tk.addr] || tk.px || 0;
     return Object.assign({}, tk, {px: px, usd: tk.bal * px});
-  }).filter(function(r){ return r.base || r.bal > 0; });
+  }).filter(function(r){ return r.base || r.bal > 0; })
+    .filter(function(r){ return S.verOcultos ? estaOculto(r.addr) : !estaOculto(r.addr); });
 
   var weth = tokBySym('WETH');
   var wldT = tokBySym('WLD');
@@ -1204,7 +1244,8 @@ function renderWallet(){
   var wldUsd = (wldT && S.prices[wldT.addr]) || 0;
   if(S.eth > 0) rows.push({sym:'ETH', name:'Ether', addr:'native', dec:18, base:true, bal:S.eth, px:ethPx, usd:S.eth*ethPx});
 
-  rows.forEach(function(r){ r.spam = looksSpam(r); if(!r.spam) total += (r.usd || 0); });
+  rows.forEach(function(r){ r.spam = looksSpam(r); if(!r.spam && !S.verOcultos) total += (r.usd || 0); });
+  if(S.verOcultos) total = S.totalUsd || 0;   /* al mirar los ocultos, el total de arriba no cambia */
   rows.sort(function(a, b){
     if(a.spam !== b.spam) return a.spam ? 1 : -1;
     return (b.usd || 0) - (a.usd || 0) || (b.bal - a.bal);
@@ -1231,7 +1272,15 @@ function renderWallet(){
       ? 'No se pudieron listar todos tus tokens ahora mismo (' + esc(S.discErr) + '). Se muestran los conocidos; toca Actualizar saldos para reintentar.'
       : 'Could not list every token right now (' + esc(S.discErr) + '). Showing known ones; tap Refresh balances to retry.') + '</div>';
   }
-  $('list-tokens').innerHTML = html || '<div class="empty">' + (LANG === 'es' ? 'Sin tokens todavía.' : 'No tokens yet.') + '</div>';
+  $('list-tokens').innerHTML = html || '<div class="empty">' + (LANG === 'es'
+    ? (S.verOcultos ? 'No tienes tokens ocultos.' : 'Sin tokens todavía.')
+    : (S.verOcultos ? 'No hidden tokens.' : 'No tokens yet.')) + '</div>';
+  var bo = $('btn-ocultos');
+  if(bo){
+    bo.textContent = S.verOcultos
+      ? (LANG === 'es' ? '← Volver' : '← Back')
+      : (HIDDEN.length ? (LANG === 'es' ? 'Ocultos (' + HIDDEN.length + ')' : 'Hidden (' + HIDDEN.length + ')') : '');
+  }
   $('total-usd').textContent = fmtUsd(total);
   var wldRow = rows.filter(function(x){ return x.sym === 'WLD'; })[0];
   $('total-sub').textContent = wldRow ? (fmtAmt(wldRow.bal) + ' WLD') : (LANG === 'es' ? 'Sin WLD' : 'No WLD');
@@ -1430,6 +1479,7 @@ function renderProfile(){
     : 'TREASURY is still a placeholder: LOOT ADS cannot collect payments.');
   showBox('cfg-warn', 'err', warn);
 }
+function verOcultos(){ S.verOcultos = !S.verOcultos; safeRender(); }
 function copyAddr(){ copy(S.addr); toast(LANG==='es'?'Dirección copiada':'Address copied'); }
 
 /* ═══════════ ficha del token ═══════════ */
@@ -1455,6 +1505,7 @@ function openToken(addr){
     + (L0 ? 'Buscando datos de mercado…' : 'Loading market data…') + '</div>';
   $('tk-social').innerHTML = '';
   $('tk-chartmsg').textContent = '';
+  pintarBotonOcultar();
   clearChart();
   openSheet('sh-tok');
   loadTokenMarket();
@@ -1792,6 +1843,19 @@ function sendFromToken(){
   S.send.tok = TOK.sym;
   closeSheet('sh-tok'); openSend();
 }
+function pintarBotonOcultar(){
+  var b = $('tk-hide'); if(!b) return;
+  var L = LANG === 'es', oc = estaOculto(TOK.addr);
+  b.textContent = oc ? (L ? '👁️ Volver a mostrarlo en mi wallet' : '👁️ Show it in my wallet again')
+                     : (L ? '🙈 Ocultar de mi wallet' : '🙈 Hide from my wallet');
+}
+function ocultarToken(){
+  var oc = alternarOculto(TOK.addr);
+  toast(LANG === 'es' ? (oc ? 'Token ocultado' : 'Token visible otra vez')
+                      : (oc ? 'Token hidden' : 'Token visible again'));
+  pintarBotonOcultar();
+  safeRender();
+}
 function copyTok(){ copy(TOK.addr); toast(LANG === 'es' ? 'Contrato copiado' : 'Contract copied'); }
 
 /* ═══════════ enviar ═══════════ */
@@ -1799,16 +1863,22 @@ function openSend(){
   if(!S.send.tok) S.send.tok = 'WLD';
   renderSendTok(); showBox('send-msg','err',''); $('send-amt').value=''; openSheet('sh-send');
 }
+function saldoDe(tk){
+  if(!tk) return 0;
+  var r = (S.tokens || []).filter(function(x){ return x.addr === tk.addr; })[0];
+  if(r && isFinite(r.bal)) return r.bal;
+  r = (S.tokens || []).filter(function(x){ return x.sym === tk.sym; })[0];
+  return (r && isFinite(r.bal)) ? r.bal : (isFinite(tk.bal) ? tk.bal : 0);
+}
 function renderSendTok(){
   var tk = tokBySym(S.send.tok) || BASE_TOKENS[0];
-  var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
+  var row = {bal: saldoDe(tk)};
   $('send-ico').textContent = tk.sym.slice(0,4);
   $('send-sym').textContent = tk.sym;
   $('send-bal').textContent = (LANG==='es'?'Disponible: ':'Available: ') + fmtAmt(row?row.bal:0) + ' ' + tk.sym;
 }
 function sendMax(){
-  var row = S.tokens.filter(function(x){ return x.sym===S.send.tok; })[0];
-  $('send-amt').value = row ? String(row.bal) : '0';
+  $('send-amt').value = String(saldoDe(tokBySym(S.send.tok)));
   sendPreview();
 }
 function sendPreview(){ showBox('send-msg','err',''); }
@@ -1820,10 +1890,10 @@ function doSend(){
     ? 'Esa dirección no es válida. Debe empezar con 0x y tener 42 caracteres.'
     : 'That address is not valid. It must start with 0x and be 42 characters long.');
   if(!isFinite(amt) || amt<=0) return showBox('send-msg','err', LANG==='es'?'Escribe una cantidad.':'Enter an amount.');
-  var row = S.tokens.filter(function(x){ return x.sym===tk.sym; })[0];
-  if(row && amt > row.bal) return showBox('send-msg','err', LANG==='es'
-    ? 'No te alcanza: tienes '+fmtAmt(row.bal)+' '+tk.sym+'.'
-    : 'Not enough: you have '+fmtAmt(row.bal)+' '+tk.sym+'.');
+  var disp = saldoDe(tk);
+  if(disp > 0 && amt > disp) return showBox('send-msg','err', LANG==='es'
+    ? 'No te alcanza: tienes '+fmtAmt(disp)+' '+tk.sym+'.'
+    : 'Not enough: you have '+fmtAmt(disp)+' '+tk.sym+'.');
 
   var units;
   try{ units = toUnits(amt, tk.dec); }catch(e){ return showBox('send-msg','err','Cantidad inválida'); }
@@ -1913,11 +1983,9 @@ function openSwap(){
 function renderSwap(){
   $('sw-in-sym').textContent = S.swap.in;
   $('sw-out-sym').textContent = S.swap.out;
-  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
-  var bo = S.tokens.filter(function(x){ return x.sym===S.swap.out; })[0];
   var lbl = LANG==='es' ? 'Disponible: ' : 'Available: ';
-  $('sw-in-bal').textContent  = lbl + fmtAmt(bi?bi.bal:0) + ' ' + S.swap.in;
-  $('sw-out-bal').textContent = lbl + fmtAmt(bo?bo.bal:0) + ' ' + S.swap.out;
+  $('sw-in-bal').textContent  = lbl + fmtAmt(saldoDe(tokBySym(S.swap.in)))  + ' ' + S.swap.in;
+  $('sw-out-bal').textContent = lbl + fmtAmt(saldoDe(tokBySym(S.swap.out))) + ' ' + S.swap.out;
   $('sw-lootfee').textContent = feeTxt();
   var L = LANG === 'es';
   if(isHolder()){
@@ -1937,8 +2005,7 @@ function flipSwap(){
   renderSwap(); quoteSoon();
 }
 function swapMax(){
-  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
-  $('sw-in').value = bi ? String(bi.bal) : '0';
+  $('sw-in').value = String(saldoDe(tokBySym(S.swap.in)));
   quoteSoon();
 }
 function setSlip(v){
@@ -1964,7 +2031,13 @@ function bestPool(a, b){
   });
   return Promise.all(jobs).then(function(res){
     var ok = res.filter(Boolean);
-    if(!ok.length) return null;
+    if(!ok.length){
+      /* distinguir "no existe pool" de "no pude preguntar" */
+      if(res.every(function(x){ return x === null; }) && S.rpcFalla) throw new Error(LANG === 'es'
+        ? 'No se pudo consultar la cadena para buscar el pool. Revisa tu conexión y reintenta.'
+        : 'Could not query the chain to find the pool. Check your connection and retry.');
+      return null;
+    }
     ok.sort(function(x, y){ return x.liq > y.liq ? -1 : 1; });
     return ok[0];
   });
@@ -2138,10 +2211,10 @@ function doSwap(){
   var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
   if(!isFinite(amt) || amt<=0) return showBox('sw-msg','err', LANG==='es'?'Escribe una cantidad.':'Enter an amount.');
   if(!S.swap.quote) return showBox('sw-msg','err', LANG==='es'?'Espera la cotización.':'Wait for the quote.');
-  var bi = S.tokens.filter(function(x){ return x.sym===S.swap.in; })[0];
-  if(bi && amt > bi.bal) return showBox('sw-msg','err', LANG==='es'
-    ? 'No te alcanza: tienes '+fmtAmt(bi.bal)+' '+ti.sym+'.'
-    : 'Not enough: you have '+fmtAmt(bi.bal)+' '+ti.sym+'.');
+  var dispI = saldoDe(ti);
+  if(dispI > 0 && amt > dispI) return showBox('sw-msg','err', LANG==='es'
+    ? 'No te alcanza: tienes '+fmtAmt(dispI)+' '+ti.sym+'.'
+    : 'Not enough: you have '+fmtAmt(dispI)+' '+ti.sym+'.');
 
   var gross = toUnits(amt, ti.dec);
   var fee = (gross * BigInt(feeBps())) / 10000n;
@@ -2322,6 +2395,7 @@ function runDiag(){
   Promise.all(jobs).then(function(){
     return null;
   }).then(function(){
+    lines.push(proveedor() ? '✅ proveedor de World App disponible' : '⚠️ sin proveedor inyectado');
     lines.push((MK ? '✅ MiniKit cargado' : '❌ MiniKit no cargado') + (mkInstalled()?' · isInstalled sí':' · isInstalled no'));
     MK_LOG.forEach(function(l){ lines.push('   '+l); });
     showBox('diag-out','ok', lines.map(esc).join('<br>'));

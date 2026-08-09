@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b42';
+const BUILD = 'LW b43';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -2216,11 +2216,79 @@ function doQuote(){
   if(!ti || !to) return;
   $('sw-out').value = '…';
   findRoute(ti.addr, to.addr).then(function(rt){
-    var dl = Math.floor(Date.now()/1000) + 1800;
+    $('sw-fee').textContent = ((rt.fee || 3000) / 10000) + '%'
+      + (rt.kind === 'path' ? (LANG === 'es' ? ' · vía ' : ' · via ') + rt.label : '')
+      + (rt.kind === 'v2' ? ' · Uniswap V2' : '');
+    $('sw-lootfee').textContent = feeTxt();
+    var gross = toUnits(amt, ti.dec);
+    var fee = (gross * BigInt(feeBps())) / 10000n;
+    var units = gross - fee;
+    S.swap.gross = gross; S.swap.fee_ = fee; S.swap.net = units;
+
+    if(rt.kind === 'v2'){
+      /* se calcula con las reservas del propio par: no depende de nada más */
+      return Promise.all([
+        ethCall(rt.pair, sel('getReserves()')),
+        ethCall(rt.pair, sel('token0()'))
+      ]).then(function(o){
+        var d = String(o[0]).slice(2);
+        var r0 = BigInt('0x' + d.slice(0, 64));
+        var r1 = BigInt('0x' + d.slice(64, 128));
+        var t0 = ('0x' + String(o[1]).slice(-40)).toLowerCase();
+        var esCero = (t0 === ti.addr);
+        var rIn  = esCero ? r0 : r1;
+        var rOut = esCero ? r1 : r0;
+        if(rIn === 0n || rOut === 0n) throw new Error(LANG === 'es' ? 'El pool está vacío.' : 'The pool is empty.');
+        var conFee = units * BigInt(10000 - (rt.v2fee || 30));
+        return (conFee * rOut) / (rIn * 10000n + conFee);
+      });
+    }
+    if(rt.kind === 'single'){
+      var d1 = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
+             + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, rt.fee, 0]]);
+      return ethCall(UNI_QUOTER, d1).then(function(r){ return dec(['uint256','uint160','uint32','uint256'], r)[0]; });
+    }
+    var d2 = sel('quoteExactInput(bytes,uint256)') + enc(['bytes','uint256'], [rt.path, units]);
+    return ethCall(UNI_QUOTER, d2).then(function(r){ return dec(['uint256','uint160[]','uint32[]','uint256'], r)[0]; });
+  }).then(function(out){
+    var to2 = tokBySym(S.swap.out);
+    var human = fromUnits(out, to2.dec);
+    S.swap.quote = out;
+    $('sw-out').value = fmtAmt(human);
+    $('sw-rate').textContent = '1 ' + S.swap.in + ' ≈ ' + fmtAmt(human / amt) + ' ' + S.swap.out;
+    showBox('sw-msg','err','');
+    updateMin();
+  }).catch(function(e){
+    $('sw-out').value=''; S.swap.quote=0;
+    showBox('sw-msg','err', esc(e.message || String(e)));
+    updateMin();
+  });
+}
+function updateMin(){
+  var to = tokBySym(S.swap.out);
+  if(!S.swap.quote || !to){ $('sw-min').textContent = '—'; return; }
+  var min = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip * 10)) / 1000n;
+  $('sw-min').textContent = fmtAmt(fromUnits(min, to.dec)) + ' ' + S.swap.out;
+}
+function doSwap(){
+  var amt = num($('sw-in').value);
+  var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
+  if(!isFinite(amt) || amt <= 0) return showBox('sw-msg','err', LANG === 'es' ? 'Escribe una cantidad.' : 'Enter an amount.');
+  if(!S.swap.quote) return showBox('sw-msg','err', LANG === 'es' ? 'Espera la cotización.' : 'Wait for the quote.');
+  var dispI = saldoDe(ti);
+  if(dispI > 0 && amt > dispI) return showBox('sw-msg','err', LANG === 'es'
+    ? 'No te alcanza: tienes ' + fmtAmt(dispI) + ' ' + ti.sym + '.'
+    : 'Not enough: you have ' + fmtAmt(dispI) + ' ' + ti.sym + '.');
+
+  var gross  = toUnits(amt, ti.dec);
+  var fee    = (gross * BigInt(feeBps())) / 10000n;
+  var minOut = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip * 10)) / 1000n;
+  busy('sw-go', true); showBox('sw-msg','err','');
+
+  findRoute(ti.addr, to.addr).then(function(rt){
     var path = rt.kind === 'path' ? rt.path
              : ('0x' + ti.addr.slice(2) + (rt.fee || 3000).toString(16).padStart(6,'0') + to.addr.slice(2)).toLowerCase();
 
-    /* llamada a NUESTRO router según el tipo de ruta */
     function llamadaRouter(){
       if(rt.kind === 'v2'){
         return tx(LOOT_ROUTER, 'swapV2(address,address,address,uint256,uint256)',
@@ -2237,7 +2305,7 @@ function doQuote(){
         'swapSingle', [ti.addr, to.addr, rt.fee, gross.toString(), minOut.toString()]);
     }
 
-    /* A: Permit2 + nuestro router (comisión on-chain) */
+    /* A: Permit2 + nuestro router (la comisión la cobra el contrato) */
     var A = [
       tx(PERMIT2, 'approve(address,address,uint160,uint48)',
         ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, 0],
@@ -2245,8 +2313,7 @@ function doQuote(){
       llamadaRouter()
     ];
 
-    /* B: approve normal + Uniswap directo, con la comisión aparte.
-       Sirve si World App todavía bloquea Permit2 en este teléfono. */
+    /* B: approve normal + Uniswap directo, por si World App aún bloquea Permit2 */
     var B = null;
     if(rt.kind !== 'v2'){
       var neto = gross - fee;

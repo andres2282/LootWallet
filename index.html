@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b41';
+const BUILD = 'LW b42';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -844,7 +844,7 @@ function withTimeout(pr, ms, msg){
   })]);
 }
 function sendTx(batch, ms){
-  var timeout = ms || 35000;
+  var timeout = ms || 20000;
   var L = LANG === 'es';
   var low = stripLow(batch);
   var hi = null;
@@ -2216,143 +2216,70 @@ function doQuote(){
   if(!ti || !to) return;
   $('sw-out').value = '…';
   findRoute(ti.addr, to.addr).then(function(rt){
-    $('sw-fee').textContent = (rt.fee / 10000) + '%'
-      + (rt.kind === 'path' ? (LANG === 'es' ? ' · vía ' : ' · via ') + rt.label : '')
-      + (rt.kind === 'v2' ? ' · Uniswap V2' : '');
-    $('sw-lootfee').textContent = feeTxt();
-    var gross = toUnits(amt, ti.dec);
-    var fee = (gross * BigInt(feeBps())) / 10000n;
-    var units = gross - fee;
-    S.swap.gross = gross; S.swap.fee_ = fee; S.swap.net = units;
-    if(rt.kind === 'v2'){
-      /* se calcula con las reservas del propio par: no depende de nada más */
-      return Promise.all([
-        ethCall(rt.pair, sel('getReserves()')),
-        ethCall(rt.pair, sel('token0()'))
-      ]).then(function(o){
-        var d = String(o[0]).slice(2);
-        var r0 = BigInt('0x' + d.slice(0, 64));
-        var r1 = BigInt('0x' + d.slice(64, 128));
-        var t0 = ('0x' + String(o[1]).slice(-40)).toLowerCase();
-        var esCero = (t0 === ti.addr);
-        var rIn  = esCero ? r0 : r1;
-        var rOut = esCero ? r1 : r0;
-        if(rIn === 0n || rOut === 0n) throw new Error(LANG === 'es' ? 'El pool está vacío.' : 'The pool is empty.');
-        var conFee = units * BigInt(10000 - (rt.v2fee || 30));
-        return (conFee * rOut) / (rIn * 10000n + conFee);
-      });
-    }
-    if(rt.kind === 'single'){
-      var d = sel('quoteExactInputSingle((address,address,uint256,uint24,uint160))')
-            + enc(['tuple(address,address,uint256,uint24,uint160)'], [[ti.addr, to.addr, units, rt.fee, 0]]);
-      return ethCall(UNI_QUOTER, d).then(function(r){ return dec(['uint256','uint160','uint32','uint256'], r)[0]; });
-    }
-    var d2 = sel('quoteExactInput(bytes,uint256)') + enc(['bytes','uint256'], [rt.path, units]);
-    return ethCall(UNI_QUOTER, d2).then(function(r){ return dec(['uint256','uint160[]','uint32[]','uint256'], r)[0]; });
-  }).then(function(out){
-    var human = fromUnits(out, to.dec);
-    S.swap.quote = out;
-    $('sw-out').value = fmtAmt(human);
-    $('sw-rate').textContent = '1 ' + S.swap.in + ' ≈ ' + fmtAmt(human / amt) + ' ' + S.swap.out;
-    showBox('sw-msg','err','');
-    updateMin();
-  }).catch(function(e){
-    $('sw-out').value=''; S.swap.quote=0;
-    showBox('sw-msg','err', esc(e.message || String(e)));
-    updateMin();
-  });
-}
-function updateMin(){
-  var to = tokBySym(S.swap.out);
-  if(!S.swap.quote || !to){ $('sw-min').textContent='—'; return; }
-  var min = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip*10)) / 1000n;
-  $('sw-min').textContent = fmtAmt(fromUnits(min, to.dec)) + ' ' + S.swap.out;
-}
-/* Descubre el router que de verdad usan los swaps de World Chain:
-   se miran los eventos Swap del pool WLD/USDC y se cuenta quién los ejecuta. */
-function discoverRouter(){
-  var cached = localStorage.getItem('loot.router');
-  if(cached){ try{ return Promise.resolve(JSON.parse(cached)); }catch(e){} }
-  var wld = tokBySym('WLD'), usdc = tokBySym('USDC');
-  if(!wld || !usdc) return Promise.reject(new Error('faltan tokens base'));
-  return bestPool(wld.addr, usdc.addr).then(function(pl){
-    if(!pl) throw new Error('sin pool WLD/USDC');
-    return rpc('eth_blockNumber').then(function(bn){
-      var latest = parseInt(bn, 16);
-      var topic = ethers.id(SWAP_V3);
-      var ranges = [];
-      for(var b = latest - 5000; b <= latest; b += 1000) ranges.push([b, Math.min(latest, b + 999)]);
-      return Promise.all(ranges.map(function(rg){
-        return getLogsAny({address: pl.pool, topics: [topic],
-          fromBlock: '0x' + rg[0].toString(16), toBlock: '0x' + rg[1].toString(16)}).catch(function(){ return []; });
-      })).then(function(all){
-        var cuenta = {};
-        all.forEach(function(ls){
-          (ls || []).forEach(function(lg){
-            var s = '0x' + String(lg.topics[1] || '').slice(-40);
-            if(/^0x[0-9a-f]{40}$/i.test(s)) cuenta[s.toLowerCase()] = (cuenta[s.toLowerCase()] || 0) + 1;
-          });
-        });
-        var top = Object.keys(cuenta).sort(function(a, b){ return cuenta[b] - cuenta[a]; })[0];
-        if(!top) throw new Error('sin swaps recientes en el pool');
-        /* SwapRouter02 responde a factory(); el Universal Router no */
-        return ethCall(top, sel('factory()')).then(function(r){
-          return {addr: top, kind: (r && r.length >= 66) ? 'sr02' : 'ur', hits: cuenta[top]};
-        }).catch(function(){ return {addr: top, kind: 'ur', hits: cuenta[top]}; });
-      });
-    });
-  }).then(function(r){
-    try{ localStorage.setItem('loot.router', JSON.stringify(r)); }catch(e){}
-    return r;
-  });
-}
-/* SwapRouter02 no lleva deadline; el clásico sí. Detecta cuál es. */
-function routerKind(){
-  if(S.swap.kind) return Promise.resolve(S.swap.kind);
-  return ethCall(UNI_ROUTER, sel('positionManager()'))
-    .then(function(r){ S.swap.kind = (r && r.length >= 66) ? '02' : 'classic'; return S.swap.kind; })
-    .catch(function(){ S.swap.kind='02'; return '02'; });
-}
-function doSwap(){
-  var amt = num($('sw-in').value);
-  var ti = tokBySym(S.swap.in), to = tokBySym(S.swap.out);
-  if(!isFinite(amt) || amt<=0) return showBox('sw-msg','err', LANG==='es'?'Escribe una cantidad.':'Enter an amount.');
-  if(!S.swap.quote) return showBox('sw-msg','err', LANG==='es'?'Espera la cotización.':'Wait for the quote.');
-  var dispI = saldoDe(ti);
-  if(dispI > 0 && amt > dispI) return showBox('sw-msg','err', LANG==='es'
-    ? 'No te alcanza: tienes '+fmtAmt(dispI)+' '+ti.sym+'.'
-    : 'Not enough: you have '+fmtAmt(dispI)+' '+ti.sym+'.');
+    var dl = Math.floor(Date.now()/1000) + 1800;
+    var path = rt.kind === 'path' ? rt.path
+             : ('0x' + ti.addr.slice(2) + (rt.fee || 3000).toString(16).padStart(6,'0') + to.addr.slice(2)).toLowerCase();
 
-  var gross = toUnits(amt, ti.dec);
-  var fee = (gross * BigInt(feeBps())) / 10000n;
-  var units = gross - fee;
-  var minOut = (BigInt(S.swap.quote) * BigInt(1000 - S.swap.slip*10)) / 1000n;
-  busy('sw-go', true); showBox('sw-msg','err','');
-
-  findRoute(ti.addr, to.addr).then(function(rt){
-    /* la comisión ya la cobra el contrato: se le manda el bruto */
-    /* la expiración va en 0: World App la consume en la misma transacción */
-    var batch = [tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-      ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, 0],
-      'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), '0'])];
-
-    if(rt.kind === 'v2'){
-      batch.push(tx(LOOT_ROUTER, 'swapV2(address,address,address,uint256,uint256)',
-        ['address','address','address','uint256','uint256'], [ti.addr, to.addr, rt.pair, gross, minOut],
-        'swapV2', [ti.addr, to.addr, rt.pair, gross.toString(), minOut.toString()]));
-    } else if(rt.kind === 'path'){
-      batch.push(tx(LOOT_ROUTER, 'swapPath(address,address,bytes,uint256,uint256)',
-        ['address','address','bytes','uint256','uint256'], [ti.addr, to.addr, rt.path, gross, minOut],
-        'swapPath', [ti.addr, to.addr, rt.path, gross.toString(), minOut.toString()]));
-    } else {
-      batch.push(tx(LOOT_ROUTER, 'swapSingle(address,address,uint24,uint256,uint256)',
+    /* llamada a NUESTRO router según el tipo de ruta */
+    function llamadaRouter(){
+      if(rt.kind === 'v2'){
+        return tx(LOOT_ROUTER, 'swapV2(address,address,address,uint256,uint256)',
+          ['address','address','address','uint256','uint256'], [ti.addr, to.addr, rt.pair, gross, minOut],
+          'swapV2', [ti.addr, to.addr, rt.pair, gross.toString(), minOut.toString()]);
+      }
+      if(rt.kind === 'path'){
+        return tx(LOOT_ROUTER, 'swapPath(address,address,bytes,uint256,uint256)',
+          ['address','address','bytes','uint256','uint256'], [ti.addr, to.addr, rt.path, gross, minOut],
+          'swapPath', [ti.addr, to.addr, rt.path, gross.toString(), minOut.toString()]);
+      }
+      return tx(LOOT_ROUTER, 'swapSingle(address,address,uint24,uint256,uint256)',
         ['address','address','uint24','uint256','uint256'], [ti.addr, to.addr, rt.fee, gross, minOut],
-        'swapSingle', [ti.addr, to.addr, rt.fee, gross.toString(), minOut.toString()]));
+        'swapSingle', [ti.addr, to.addr, rt.fee, gross.toString(), minOut.toString()]);
     }
+
+    /* A: Permit2 + nuestro router (comisión on-chain) */
+    var A = [
+      tx(PERMIT2, 'approve(address,address,uint160,uint48)',
+        ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, 0],
+        'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), '0']),
+      llamadaRouter()
+    ];
+
+    /* B: approve normal + Uniswap directo, con la comisión aparte.
+       Sirve si World App todavía bloquea Permit2 en este teléfono. */
+    var B = null;
+    if(rt.kind !== 'v2'){
+      var neto = gross - fee;
+      var datosUni = rt.kind === 'path'
+        ? sel('exactInput((bytes,address,uint256,uint256))')
+          + enc(['tuple(bytes,address,uint256,uint256)'], [[path, S.addr, neto, minOut]])
+        : sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
+          + enc(['tuple(address,address,uint24,address,uint256,uint256,uint160)'],
+                [[ti.addr, to.addr, rt.fee, S.addr, neto, minOut, 0]]);
+      B = [];
+      if(fee > 0n){
+        var T = TREASURY.toLowerCase();
+        B.push(tx(ti.addr, 'transfer(address,uint256)', ['address','uint256'], [T, fee], 'transfer', [T, fee.toString()]));
+      }
+      B.push(tx(ti.addr, 'approve(address,uint256)', ['address','uint256'], [UNI_ROUTER, neto],
+                'approve', [UNI_ROUTER, neto.toString()]));
+      B.push({to: UNI_ROUTER, data: datosUni});
+    }
+
     S.lastRouter = {addr: LOOT_ROUTER, kind: rt.kind};
-    return sendTx(batch);
+    return sendTx(A).then(function(r){ S.via = 'LootRouter+Permit2'; return r; })
+      .catch(function(e1){
+        if(!B) throw e1;
+        S.errA = (e1.message || String(e1)).slice(0, 140);
+        return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
+          .catch(function(e2){
+            throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router path: ') + S.errA
+              + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap path: ') + (e2.message || e2));
+          });
+      });
   }).then(function(res){
-    showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ')+fmtAmt(amt)+' '+ti.sym+' → '+to.sym);
+    showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ') + fmtAmt(amt) + ' ' + ti.sym + ' → ' + to.sym
+      + (S.via ? ' · ' + esc(S.via) : '') + (S.txMode ? ' · ' + esc(S.txMode) : ''));
     $('sw-in').value=''; $('sw-out').value=''; S.swap.quote=0;
     completeMission('swap');
     setTimeout(function(){ refreshAll(false); }, 6000);

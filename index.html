@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b40';
+const BUILD = 'LW b41';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -833,6 +833,10 @@ function toHigh(batch){
 function stripLow(batch){
   return batch.map(function(t){ return {to: t.to, data: t.data}; });
 }
+/* v2: el campo se llama address, y el data crudo tiene prioridad sobre el ABI */
+function stripV2(batch){
+  return batch.map(function(t){ return {address: t.to, data: t.data}; });
+}
 /* si World App no contesta, el botón no puede quedarse girando para siempre */
 function withTimeout(pr, ms, msg){
   return Promise.race([pr, new Promise(function(_, rej){
@@ -858,7 +862,8 @@ function sendTx(batch, ms){
   }
   /* v2 usa {transactions:[{to,data}]}; v1 usa {transaction:[{address,abi,...}]} */
   var pasos = [
-    function(){ return intento({chainId: CHAIN_ID, transactions: low}, 'v2'); },
+    function(){ return intento({chainId: CHAIN_ID, transaction: stripV2(batch)}, 'v2-address+data'); },
+    function(){ return intento({chainId: CHAIN_ID, transactions: stripV2(batch)}, 'v2-plural'); },
     function(){ return hi ? intento({chainId: CHAIN_ID, transaction: hi}, 'v1-abi') : Promise.reject(new Error('sin ABI')); },
     function(){ return intento({chainId: CHAIN_ID, transaction: low}, 'v1-crudo'); }
   ];
@@ -876,7 +881,7 @@ function sendTx(batch, ms){
 }
 function payload(res){
   if(!res) return null;
-  return res.finalPayload || res.payload || res;
+  return res.finalPayload || res.payload || res.data || res;
 }
 function txError(p){
   if(!p) return 'Sin respuesta de World App';
@@ -962,13 +967,18 @@ function connect(){
         : 'MiniKit could not be loaded from any CDN. Attempts: ') + MK_LOG.join(' · '));
     }
     /* no se bloquea por isInstalled(): en algunas versiones da false y walletAuth funciona igual */
-    var nonce = (Date.now().toString(36) + Math.random().toString(36).slice(2)).padEnd(16,'0').slice(0,24);
+    /* v2 valida el nonce: solo letras y números */
+    var nonce = (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2))
+      .replace(/[^a-z0-9]/gi, '').padEnd(24, '0').slice(0, 24);
     return mkCall('walletAuth', {nonce: nonce, statement: 'LOOT WALLET · Your Web3 loot starts here.'});
   }).then(function(res){
     var p = payload(res);
     if(p && p.status === 'error') throw new Error(txError(p));
-    var a = (p && p.address) || (MK && MK.walletAddress) || '';
-    if(!a) throw new Error(LANG==='es' ? 'World App no devolvió una dirección.' : 'World App returned no address.');
+    return direccionDe(p);
+  }).then(function(a){
+    if(!a) throw new Error(LANG === 'es'
+      ? 'World App no devolvió una dirección. Cierra la mini app del todo y vuelve a abrirla.'
+      : 'World App returned no address. Fully close the mini app and reopen it.');
     S.addr = a.toLowerCase();
     return getUsername(S.addr);
   }).then(function(u){
@@ -983,6 +993,30 @@ function connect(){
     b.disabled=false; b.textContent=t('connect');
     $('splash-msg').innerHTML = '<div class="err">'+esc(e.message||String(e))+'</div>'
       + (MK_LOG.length ? '<div class="mini" style="margin-top:8px">MiniKit: '+esc(MK_LOG.join(' · '))+'</div>' : '');
+  });
+}
+/* la dirección llega en sitios distintos según la versión: se buscan todos */
+function direccionDe(p){
+  function leer(){
+    var cands = [];
+    try{ if(p){ cands.push(p.address, p.walletAddress, p.from, p.data && p.data.address); } }catch(e){}
+    try{ cands.push(MK && MK.walletAddress); }catch(e){}
+    try{ cands.push(MK && MK.user && MK.user.walletAddress); }catch(e){}
+    try{ cands.push(window.MiniKit && window.MiniKit.walletAddress); }catch(e){}
+    for(var i = 0; i < cands.length; i++){
+      if(typeof cands[i] === 'string' && /^0x[0-9a-fA-F]{40}$/.test(cands[i])) return cands[i];
+    }
+    return '';
+  }
+  var ya = leer();
+  if(ya) return Promise.resolve(ya);
+  /* a veces MiniKit rellena walletAddress un instante después */
+  return new Promise(function(res){
+    var n = 0;
+    var iv = setInterval(function(){
+      var a = leer();
+      if(a || ++n > 15){ clearInterval(iv); res(a); }
+    }, 200);
   });
 }
 function getUsername(a){

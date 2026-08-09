@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b38';
+const BUILD = 'LW b39';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -692,16 +692,12 @@ function resolveMK(){
   return null;
 }
 var MK_LOG = [];
-var MK_UMD = [
-  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
-  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js/dist/index.umd.js',
-  'https://unpkg.com/@worldcoin/minikit-js@1.9.6/dist/index.umd.js',
-  'https://unpkg.com/@worldcoin/minikit-js/dist/index.umd.js',
-  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@1.6.0/dist/index.umd.js'
-];
+var MK_UMD = [];   /* jsdelivr y unpkg no responden dentro de World App */
+/* v2 primero: en v1 World App prohíbe llamar approve() de Permit2 (disallowed_operation) */
 var MK_ESM = [
-  'https://esm.sh/@worldcoin/minikit-js@1.9.6',
-  'https://esm.sh/@worldcoin/minikit-js'
+  'https://esm.sh/@worldcoin/minikit-js@2',
+  'https://esm.sh/@worldcoin/minikit-js@latest',
+  'https://esm.sh/@worldcoin/minikit-js@1.9.6'
 ];
 function waitMK(){
   return new Promise(function(res){
@@ -747,7 +743,8 @@ function initMiniKit(){
       else m.install();
     }catch(e){ MK_LOG.push('install() lanzó: '+(e.message||e)); }
     MK = m; window._MiniKit = m;
-    MK_LOG.push('isInstalled: '+(mkInstalled()?'sí':'no'));
+    S.mkV2 = typeof m.sendTransaction === 'function' && !(m.commandsAsync && m.commandsAsync.sendTransaction);
+    MK_LOG.push('isInstalled: ' + (mkInstalled() ? 'sí' : 'no') + ' · API ' + (S.mkV2 ? 'v2' : 'v1'));
     return m;
   }).catch(function(e){ MK_LOG.push('init: '+(e.message||e)); return null; });
   return mkPromise;
@@ -834,12 +831,13 @@ function withTimeout(pr, ms, msg){
 function sendTx(batch, ms){
   var timeout = ms || 35000;
   var L = LANG === 'es';
+  var low = stripLow(batch);
   var hi = null;
   try{ hi = toHigh(batch); }catch(e){ hi = null; }
 
   function intento(carga, etiqueta){
     return withTimeout(mkCall('sendTransaction', carga), timeout,
-      (L ? 'World App no respondió al formato ' : 'World App did not answer format ') + etiqueta)
+      (L ? 'sin respuesta al formato ' : 'no answer to format ') + etiqueta)
       .then(function(res){
         var p = payload(res);
         if(p && p.status === 'error') throw new Error(txError(p));
@@ -847,22 +845,23 @@ function sendTx(batch, ms){
         return res;
       });
   }
-  var primero = hi
-    ? intento({transaction: hi, chainId: CHAIN_ID}, 'abi')
-    : Promise.reject(new Error('sin ABI'));
-
-  return primero.catch(function(e1){
-    S.txErr1 = e1.message || String(e1);
-    /* algunas versiones esperan la lista cruda bajo otra clave */
-    var low = stripLow(batch);
-    return intento({transaction: low, chainId: CHAIN_ID}, 'to/data')
-      .catch(function(e2){
-        throw new Error((L
-          ? 'World App no aceptó ninguno de los tres formatos. Primero: '
-          : 'World App rejected all three formats. First: ') + S.txErr1
-          + (L ? ' · Último: ' : ' · Last: ') + (e2.message || e2));
-      });
-  });
+  /* v2 usa {transactions:[{to,data}]}; v1 usa {transaction:[{address,abi,...}]} */
+  var pasos = [
+    function(){ return intento({chainId: CHAIN_ID, transactions: low}, 'v2'); },
+    function(){ return hi ? intento({chainId: CHAIN_ID, transaction: hi}, 'v1-abi') : Promise.reject(new Error('sin ABI')); },
+    function(){ return intento({chainId: CHAIN_ID, transaction: low}, 'v1-crudo'); }
+  ];
+  var fallos = [];
+  function siguiente(i){
+    if(i >= pasos.length){
+      throw new Error((L ? 'World App rechazó los tres formatos · ' : 'All three formats rejected · ') + fallos.join(' | '));
+    }
+    return pasos[i]().catch(function(e){
+      fallos.push((e.message || String(e)).slice(0, 120));
+      return siguiente(i + 1);
+    });
+  }
+  return siguiente(0);
 }
 function payload(res){
   if(!res) return null;

@@ -419,7 +419,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b52';
+const BUILD = 'LW b53';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -446,7 +446,11 @@ const RPCS = [
 ];
 const UNI_FACTORY = '0x7a5028bda40e7b173c278c5342087826455ea25a';
 const UNI_QUOTER  = '0x10158d43e6cc414dee1bd1eb0efc6a5cbcff244c';
-const UNI_ROUTER  = '0x091ad9e2e6e5ed44c1c66db50e49a601f9f36cf6';
+/* Routers sacados de swaps REALES analizados en la cadena (no de documentación) */
+const UNI_ROUTER    = '0x1072a0a713a23a2da9bab99e9cd68187970e89a4';   // ejecuta los swaps V3
+const V2_ROUTER     = '0x541ab7c31a119441ef3575f6973277de0ef460bd';   // ejecuta los swaps V2
+const SPENDER_REAL  = '0x0000000000001ff3684f28c67538d4d072c22734';   // a quién se aprueba
+const UNI_ROUTER_OLD = '0x091ad9e2e6e5ed44c1c66db50e49a601f9f36cf6';  // el que quedó dentro del contrato
 const FEES = [100, 500, 3000, 10000];
 const PERMIT2 = '0x000000000022d473030f116ddee9f6b43ac78ba3';
 /* Router propio: cobra la comisión on-chain y evita el approve que World App bloquea.
@@ -660,6 +664,7 @@ const SELS = {
   'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))':'0x04e45aaf',
   'exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))':'0x414bf389',
   'quoteExactInput(bytes,uint256)':'0xcdca1753',
+  'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)':'0x38ed1739',
   'exactInput((bytes,address,uint256,uint256))':'0xb858183f',
   'exactInput((bytes,address,uint256,uint256,uint256))':'0xc04b8d59',
   'approve(address,address,uint160,uint48)':'0x87517c45',
@@ -2339,25 +2344,35 @@ function doSwap(){
     }
     var VENTANAS = [300, 60, 30, 0];
 
-    /* B: approve normal + Uniswap directo, por si World App aún bloquea Permit2 */
-    var B = null;
-    if(rt.kind !== 'v2'){
-      var neto = gross - fee;
-      var datosUni = rt.kind === 'path'
-        ? sel('exactInput((bytes,address,uint256,uint256))')
-          + enc(['tuple(bytes,address,uint256,uint256)'], [[path, S.addr, neto, minOut]])
-        : sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
-          + enc(['tuple(address,address,uint24,address,uint256,uint256,uint160)'],
-                [[ti.addr, to.addr, rt.fee, S.addr, neto, minOut, 0]]);
-      B = [];
-      if(fee > 0n){
-        var T = TREASURY.toLowerCase();
-        B.push(tx(ti.addr, 'transfer(address,uint256)', ['address','uint256'], [T, fee], 'transfer', [T, fee.toString()]));
-      }
-      B.push(tx(ti.addr, 'approve(address,uint256)', ['address','uint256'], [UNI_ROUTER, neto],
-                'approve', [UNI_ROUTER, neto.toString()]));
-      B.push({to: UNI_ROUTER, data: datosUni});
+    /* B: el patrón que SÍ funciona en World Chain — approve normal al router real
+       y llamada directa. La comisión de LOOT viaja como transferencia aparte. */
+    var neto = gross - fee;
+    var dl2 = Math.floor(Date.now()/1000) + 1800;
+    var destino, datosUni;
+    if(rt.kind === 'v2'){
+      destino = V2_ROUTER;
+      datosUni = sel('swapExactTokensForTokens(uint256,uint256,address[],address,uint256)')
+        + enc(['uint256','uint256','address[]','address','uint256'],
+              [neto, minOut, [ti.addr, to.addr], S.addr, dl2]);
+    } else if(rt.kind === 'path'){
+      destino = UNI_ROUTER;
+      datosUni = sel('exactInput((bytes,address,uint256,uint256))')
+        + enc(['tuple(bytes,address,uint256,uint256)'], [[path, S.addr, neto, minOut]]);
+    } else {
+      destino = UNI_ROUTER;
+      datosUni = sel('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
+        + enc(['tuple(address,address,uint24,address,uint256,uint256,uint160)'],
+              [[ti.addr, to.addr, rt.fee, S.addr, neto, minOut, 0]]);
     }
+    var B = [];
+    if(fee > 0n){
+      var T = TREASURY.toLowerCase();
+      B.push(tx(ti.addr, 'transfer(address,uint256)', ['address','uint256'], [T, fee], 'transfer', [T, fee.toString()]));
+    }
+    B.push(tx(ti.addr, 'approve(address,uint256)', ['address','uint256'], [destino, neto],
+              'approve', [destino, neto.toString()]));
+    B.push({to: destino, data: datosUni});
+    S.destinoB = destino;
 
     S.lastRouter = {addr: LOOT_ROUTER, kind: rt.kind};
 
@@ -2384,16 +2399,17 @@ function doSwap(){
       }
     }catch(e){}
 
-    return porRouter(0).catch(function(e1){
-      var m1 = (e1.message || String(e1));
-      if(!B || /user_rejected/i.test(m1)) throw e1;
-      S.errA = m1.slice(0, 140);
-      return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
-        .catch(function(e2){
-          throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router: ') + S.errA
-            + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap: ') + (e2.message || e2));
+    /* primero el camino comprobado; el router propio queda de respaldo */
+    return sendTx(B).then(function(r){ S.via = 'router real ' + short(destino); return r; })
+      .catch(function(e1){
+        var m1 = (e1.message || String(e1));
+        if(/user_rejected/i.test(m1)) throw e1;
+        S.errA = m1.slice(0, 140);
+        return porRouter(0).catch(function(e2){
+          throw new Error((LANG === 'es' ? 'Directo: ' : 'Direct: ') + S.errA
+            + (LANG === 'es' ? ' — Por LootRouter: ' : ' — LootRouter: ') + (e2.message || e2));
         });
-    });
+      });
   }).then(function(res){
     showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ') + fmtAmt(amt) + ' ' + ti.sym + ' → ' + to.sym
       + (S.via ? ' · ' + esc(S.via) : '') + (S.txMode ? ' · ' + esc(S.txMode) : ''));
@@ -2409,7 +2425,7 @@ function doSwap(){
         : 'Add these two under <b>Permit2 Tokens</b>:<br>• ' + esc(ti.addr) + '<br>• ' + esc(to.addr));
     } else if(/invalid_contract/i.test(msg)){
       msg += '<br><br>' + (LANG === 'es'
-        ? 'En <b>Contract Entrypoints</b> deben estar:<br>• ' + PERMIT2 + '<br>• ' + LOOT_ROUTER
+        ? 'En <b>Contract Entrypoints</b> deben estar:<br>• ' + UNI_ROUTER + ' (router V3)<br>• ' + V2_ROUTER + ' (router V2)<br>• ' + esc(ti.addr) + ' (' + esc(ti.sym) + ')<br>• ' + LOOT_ROUTER
         : 'Contract Entrypoints must include:<br>• ' + PERMIT2 + '<br>• ' + LOOT_ROUTER);
     }
     showBox('sw-msg','err', msg);

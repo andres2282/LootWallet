@@ -411,7 +411,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b29';
+const BUILD = 'LW b31';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -780,7 +780,11 @@ function strArgs(a){
 }
 function tx(addr, sig, types, values, fn, args){
   var o = {to: String(addr).toLowerCase(), data: sel(sig) + enc(types, values)};
-  if(fn && ABI[fn]) o._hi = {address: String(addr).toLowerCase(), abi: ABI[fn], functionName: fn, args: strArgs(args)};
+  if(fn && ABI[fn]){
+    /* el nombre debe coincidir EXACTO con el del ABI, no con la etiqueta interna */
+    o._hi = {address: String(addr).toLowerCase(), abi: ABI[fn],
+             functionName: String(sig).split('(')[0], args: strArgs(args)};
+  }
   return o;
 }
 function toHigh(batch){
@@ -977,6 +981,7 @@ function discoverTokens(){
         var bal = 0;
         try{ bal = fromUnits(BigInt(x.value || '0'), d); }catch(e){ bal = 0; }
         if(bal <= 0) return;
+        /* este saldo viene del explorador y es tan bueno como el del RPC */
         if(tk.icon_url) META[a] = META[a] || tk.icon_url;
         out.push({sym: String(tk.symbol || '?').slice(0,14), name: String(tk.name || 'Token').slice(0,40),
                   addr: a, dec: d, bal: bal, px: parseFloat(tk.exchange_rate) || 0});
@@ -1012,9 +1017,12 @@ function loadBaseBalances(){
     var keep = {};
     (S.tokens || []).forEach(function(t){ if(!t.base) keep[t.addr] = t; });
     base.forEach(function(tk, i){
-      var bal = 0;
+      var previo = keep[tk.addr] || (S.tokens || []).filter(function(t){ return t.addr === tk.addr; })[0];
+      var bal = null;
       try{ bal = fromUnits(BigInt(res[i]), tk.dec); }catch(e){}
-      keep[tk.addr] = Object.assign({}, tk, {bal: bal, base: true});
+      keep[tk.addr] = Object.assign({}, tk, bal === null
+        ? {bal: (previo && previo.bal) || 0, base: true, failed: true}   /* falló el RPC: se conserva lo que ya había */
+        : {bal: bal, base: true});
     });
     S.tokens = Object.keys(keep).map(function(k){ return keep[k]; });
     try{ S.eth = fromUnits(BigInt(res[res.length - 1]), 18); }catch(e){ S.eth = 0; }
@@ -1031,7 +1039,14 @@ function loadBaseBalances(){
 function mergeDiscovered(list){
   var map = {};
   (list || []).forEach(function(t){ map[t.addr] = t; });
-  (S.tokens || []).forEach(function(t){ if(t.base) map[t.addr] = Object.assign({}, map[t.addr] || {}, t); });
+  (S.tokens || []).forEach(function(t){
+    if(!t.base) return;
+    var desc = map[t.addr];
+    var fusion = Object.assign({}, desc || {}, t);
+    /* si el RPC no respondió, manda el saldo del explorador */
+    if(t.failed && desc && desc.bal > 0) fusion.bal = desc.bal;
+    map[t.addr] = fusion;
+  });
   S.tokens = Object.keys(map).map(function(k){ return map[k]; });
 }
 var GECKO_NET = 'world-chain';
@@ -1115,16 +1130,28 @@ function refreshAll(showToast){
   busyLoad = true;
   setLoading(true);
   clearTimeout(S.loadGuard);
-  S.loadGuard = setTimeout(function(){ busyLoad = false; }, 30000);   /* si algo se cuelga, se desatasca solo */
-  /* etapa 1: lo conocido, que son 5 lecturas y entra al instante */
-  return verifyLootToken().then(loadBaseBalances).then(function(){
-    safeRender();
-    loadPrices().then(safeRender).catch(function(){});
-    /* etapa 2: el resto de tokens del explorador, sin bloquear la pantalla */
+  S.loadGuard = setTimeout(function(){ busyLoad = false; }, 30000);
+
+  /* etapa 1: el explorador devuelve TODA la cartera en una sola petición */
+  return verifyLootToken().then(function(){
     return discoverTokens().then(function(l){ S.discErr = ''; return l; })
       .catch(function(e){ S.discErr = e.message || 'sin respuesta'; return []; });
   }).then(function(disc){
-    if(disc && disc.length){ mergeDiscovered(disc); safeRender(); return loadPrices(); }
+    if(disc && disc.length){
+      var map = {};
+      disc.forEach(function(t){ map[t.addr] = t; });
+      allTokens().forEach(function(tk){
+        map[tk.addr] = Object.assign({}, tk, {bal: (map[tk.addr] && map[tk.addr].bal) || 0, base: true});
+      });
+      S.tokens = Object.keys(map).map(function(k){ return map[k]; });
+      safeRender();
+      loadPrices().then(safeRender).catch(function(){});
+    }
+    /* etapa 2: el RPC confirma y afina, pero ya no bloquea nada */
+    return loadBaseBalances().catch(function(){});
+  }).then(function(){
+    safeRender();
+    return loadPrices().catch(function(){});
   }).then(function(){
     safeRender();
     var wld = S.tokens.filter(function(x){ return x.sym === 'WLD'; })[0];

@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b48';
+const BUILD = 'LW b49';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -906,7 +906,7 @@ function txError(p){
     invalid_contract: 'Ese contrato no está autorizado. Agrégalo en Developer Portal → Mini App → Permissions → Contract Entrypoints.',
     invalid_operation:'World App rechazó la operación. Suele ser un contrato o token sin dar de alta en el portal.',
     user_rejected:    'Cancelaste la firma.',
-    simulation_failed:'La simulación falló: revisa saldo, aprobación o que el pool exista.',
+    simulation_failed:'La transacción revierte al simularla. Suele ser el permiso de Permit2 vencido, el mínimo a recibir demasiado alto o poca liquidez en el pool. Prueba con tolerancia 5% y un monto menor.',
     gas_limit_exceeded:'La transacción pide demasiado gas para World App.'
   };
   return map[c] || ('World App devolvió: '+esc(JSON.stringify(c)));
@@ -2320,11 +2320,14 @@ function doSwap(){
         'swapSingle', [ti.addr, to.addr, rt.fee, gross.toString(), minOut.toString()]);
     }
 
-    /* A: Permit2 + nuestro router (la comisión la cobra el contrato) */
+    /* A: Permit2 + nuestro router (la comisión la cobra el contrato).
+       La expiración NO puede ir en 0: Permit2 compara con block.timestamp y
+       una aprobación con expiración 0 ya está vencida, así que revierte. */
+    var exp = Math.floor(Date.now() / 1000) + 1800;
     var A = [
       tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-        ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, 0],
-        'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), '0']),
+        ['address','address','uint160','uint48'], [ti.addr, LOOT_ROUTER, gross, exp],
+        'permit2Approve', [ti.addr, LOOT_ROUTER, gross.toString(), String(exp)]),
       llamadaRouter()
     ];
 
@@ -2474,8 +2477,8 @@ function testSign(){
   var uno = toUnits('0.001', wld.dec);
   var pruebas = [
     {n: '1· Permit2.approve', t: tx(PERMIT2, 'approve(address,address,uint160,uint48)',
-        ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, 0],
-        'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), '0'])},
+        ['address','address','uint160','uint48'], [wld.addr, LOOT_ROUTER, uno, Math.floor(Date.now()/1000) + 1800],
+        'permit2Approve', [wld.addr, LOOT_ROUTER, uno.toString(), String(Math.floor(Date.now()/1000) + 1800)])},
     {n: '2· LootRouter.swapSingle', t: tx(LOOT_ROUTER, 'swapSingle(address,address,uint24,uint256,uint256)',
         ['address','address','uint24','uint256','uint256'],
         [wld.addr, tokBySym('USDC').addr, 10000, uno, 0n],

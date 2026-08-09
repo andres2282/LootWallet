@@ -419,7 +419,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b53';
+const BUILD = 'LW b55';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -658,6 +658,7 @@ const SELS = {
   'getReserves()':'0x0902f1ac',
   'liquidity()':'0x1a686502',
   'factory()':'0xc45a0155',
+  'WETH9()':'0x4aa4a4fc',
   'positionManager()':'0x791b98bc',
   'getPool(address,address,uint24)':'0x1698ee82',
   'quoteExactInputSingle((address,address,uint256,uint24,uint160))':'0xc6a5026a',
@@ -665,6 +666,7 @@ const SELS = {
   'exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))':'0x414bf389',
   'quoteExactInput(bytes,uint256)':'0xcdca1753',
   'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)':'0x38ed1739',
+  'swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)':'0x5c11d795',
   'exactInput((bytes,address,uint256,uint256))':'0xb858183f',
   'exactInput((bytes,address,uint256,uint256,uint256))':'0xc04b8d59',
   'approve(address,address,uint160,uint48)':'0x87517c45',
@@ -2351,7 +2353,13 @@ function doSwap(){
     var destino, datosUni;
     if(rt.kind === 'v2'){
       destino = V2_ROUTER;
-      datosUni = sel('swapExactTokensForTokens(uint256,uint256,address[],address,uint256)')
+      /* La variante "SupportingFeeOnTransferTokens" sirve para todos los tokens,
+         incluidos los que cobran comisión al transferirse (vender BRZL revertía
+         con la función normal porque al pool le llegaba menos de lo pedido). */
+      datosUni = sel('swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)')
+        + enc(['uint256','uint256','address[]','address','uint256'],
+              [neto, minOut, [ti.addr, to.addr], S.addr, dl2]);
+      S.v2Alt = sel('swapExactTokensForTokens(uint256,uint256,address[],address,uint256)')
         + enc(['uint256','uint256','address[]','address','uint256'],
               [neto, minOut, [ti.addr, to.addr], S.addr, dl2]);
     } else if(rt.kind === 'path'){
@@ -2401,6 +2409,13 @@ function doSwap(){
 
     /* primero el camino comprobado; el router propio queda de respaldo */
     return sendTx(B).then(function(r){ S.via = 'router real ' + short(destino); return r; })
+      .catch(function(e0){
+        /* segundo intento en V2 con la función clásica */
+        if(rt.kind !== 'v2' || !S.v2Alt || /user_rejected/i.test(e0.message || '')) throw e0;
+        var B2 = B.slice(0, B.length - 1);
+        B2.push({to: destino, data: S.v2Alt});
+        return sendTx(B2).then(function(r){ S.via = 'router V2 (clásico)'; return r; });
+      })
       .catch(function(e1){
         var m1 = (e1.message || String(e1));
         if(/user_rejected/i.test(m1)) throw e1;
@@ -2593,6 +2608,26 @@ function runDiag(){
       .then(function(r){ lineas.push('   comisión que te aplica: ' + (Number(dec(['uint16'], r)[0]) / 100) + '%'); })
       .catch(function(e){ lineas.push('   ⚠️ feeFor: ' + (e.message || '')); });
   }
+  function paso4b(){
+    lineas.push('———');
+    lineas.push('🧪 ¿sirven los routers reales para tu contrato?');
+    function revisa(dir, etiqueta){
+      return rpc('eth_getCode', [dir, 'latest']).then(function(code){
+        var bytes = (code && code.length > 4) ? ((code.length - 2) / 2) : 0;
+        if(!bytes){ lineas.push('   ' + etiqueta + ': ❌ sin código'); return; }
+        return ethCall(dir, sel('factory()'))
+          .then(function(f){ lineas.push('   ' + etiqueta + ': factory() → 0x' + String(f).slice(-40) + ' ✅ interfaz Uniswap'); })
+          .catch(function(){
+            return ethCall(dir, sel('WETH9()'))
+              .then(function(){ lineas.push('   ' + etiqueta + ': sin factory() pero responde WETH9() ⚠️'); })
+              .catch(function(){ lineas.push('   ' + etiqueta + ': ⚠️ no responde factory() — puede ser un agregador, no un SwapRouter'); });
+          });
+      }).catch(function(e){ lineas.push('   ' + etiqueta + ': error ' + (e.message || '')); });
+    }
+    return revisa(UNI_ROUTER, 'V3 ' + short(UNI_ROUTER))
+      .then(function(){ return revisa(V2_ROUTER, 'V2 ' + short(V2_ROUTER)); })
+      .then(function(){ return revisa(SPENDER_REAL, 'spender ' + short(SPENDER_REAL)); });
+  }
   function paso5(){
     var wld = tokBySym('WLD'), usdc = tokBySym('USDC');
     if(!wld || !usdc) return Promise.resolve();
@@ -2604,7 +2639,7 @@ function runDiag(){
     }).catch(function(e){ lineas.push('🏊 factory de Uniswap: ' + (e.message || 'falla')); });
   }
 
-  paso1().then(paso2).then(paso3).then(paso4).then(paso5).then(function(){
+  paso1().then(paso2).then(paso3).then(paso4).then(paso4b).then(paso5).then(function(){
     MK_LOG.forEach(function(l){ lineas.push('   ' + l); });
     showBox('diag-out','ok', lineas.map(esc).join('<br>'));
   });

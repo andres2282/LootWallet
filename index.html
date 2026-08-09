@@ -414,7 +414,7 @@ canvas#tk-chart{width:100%;height:190px;display:block;border-radius:14px;backgro
    LOOT WALLET · World Chain (480) · un solo archivo
    ⚠️ COMPLETAR ANTES DE PUBLICAR: LOOT_APP_ID y TREASURY
    ═══════════════════════════════════════════════════════════ */
-const BUILD = 'LW b43';
+const BUILD = 'LW b46';
 const LOOT_APP_ID = 'app_b92135071b0ad5f99eb84c55a5984480'; // LootWallet · rp_6067ac616fd30e61
 const TREASURY    = '0x57cbd2829e8e5a61793c12424f4a7ea7b4d7d503'; // cobros de LOOT ADS
 
@@ -696,10 +696,11 @@ function resolveMK(){
 var MK_LOG = [];
 var MK_UMD = [];   /* jsdelivr y unpkg no responden dentro de World App */
 /* v2 primero: en v1 World App prohíbe llamar approve() de Permit2 (disallowed_operation) */
+/* Mismo CDN y misma ruta que usa EggChain, donde el swap sí funciona */
 var MK_ESM = [
-  'https://esm.sh/@worldcoin/minikit-js@2',
-  'https://esm.sh/@worldcoin/minikit-js@latest',
-  'https://esm.sh/@worldcoin/minikit-js@1.9.6'
+  'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js/+esm',
+  'https://esm.sh/@worldcoin/minikit-js@1.9.6',
+  'https://esm.sh/@worldcoin/minikit-js@2'
 ];
 function waitMK(){
   return new Promise(function(res){
@@ -844,7 +845,7 @@ function withTimeout(pr, ms, msg){
   })]);
 }
 function sendTx(batch, ms){
-  var timeout = ms || 20000;
+  var timeout = ms || 15000;
   var L = LANG === 'es';
   var low = stripLow(batch);
   var hi = null;
@@ -854,18 +855,17 @@ function sendTx(batch, ms){
     return withTimeout(mkCall('sendTransaction', carga), timeout,
       (L ? 'sin respuesta al formato ' : 'no answer to format ') + etiqueta)
       .then(function(res){
-        var p = payload(res);
-        if(p && p.status === 'error') throw new Error(txError(p));
+        if(!txOk(res)) throw new Error(txMotivo(res));
         S.txMode = etiqueta;
         return res;
       });
   }
   /* v2 usa {transactions:[{to,data}]}; v1 usa {transaction:[{address,abi,...}]} */
+  /* el primero es el formato exacto que funciona en EggChain */
   var pasos = [
-    function(){ return intento({chainId: CHAIN_ID, transaction: stripV2(batch)}, 'v2-address+data'); },
-    function(){ return intento({chainId: CHAIN_ID, transactions: stripV2(batch)}, 'v2-plural'); },
-    function(){ return hi ? intento({chainId: CHAIN_ID, transaction: hi}, 'v1-abi') : Promise.reject(new Error('sin ABI')); },
-    function(){ return intento({chainId: CHAIN_ID, transaction: low}, 'v1-crudo'); }
+    function(){ return intento({chainId: CHAIN_ID, transactions: low}, 'transactions+to/data'); },
+    function(){ return intento({chainId: CHAIN_ID, transaction: stripV2(batch)}, 'transaction+address'); },
+    function(){ return hi ? intento({chainId: CHAIN_ID, transaction: hi}, 'abi') : Promise.reject(new Error('sin ABI')); }
   ];
   var fallos = [];
   function siguiente(i){
@@ -882,6 +882,20 @@ function sendTx(batch, ms){
 function payload(res){
   if(!res) return null;
   return res.finalPayload || res.payload || res.data || res;
+}
+/* mismo criterio que usa EggChain en producción */
+function txOk(res){
+  if(!res) return false;
+  if(res.data && res.data.status) return res.data.status === 'success';
+  if(res.finalPayload) return res.finalPayload.status !== 'error';
+  if(res.status) return res.status !== 'error';
+  return true;
+}
+function txMotivo(res){
+  var p = payload(res) || {};
+  var c = p.error_code || p.status || '';
+  var d = p.details ? (' ' + JSON.stringify(p.details).slice(0, 200)) : '';
+  return (txError(p) || c) + d;
 }
 function txError(p){
   if(!p) return 'Sin respuesta de World App';
@@ -2334,16 +2348,17 @@ function doSwap(){
     }
 
     S.lastRouter = {addr: LOOT_ROUTER, kind: rt.kind};
-    return sendTx(A).then(function(r){ S.via = 'LootRouter+Permit2'; return r; })
-      .catch(function(e1){
-        if(!B) throw e1;
-        S.errA = (e1.message || String(e1)).slice(0, 140);
-        return sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
-          .catch(function(e2){
-            throw new Error((LANG === 'es' ? 'Vía router: ' : 'Router path: ') + S.errA
-              + (LANG === 'es' ? ' — Vía Uniswap: ' : ' — Uniswap path: ') + (e2.message || e2));
-          });
-      });
+    /* primero la vía con menos piezas: approve normal + Uniswap directo */
+    var primera = B ? sendTx(B).then(function(r){ S.via = 'Uniswap directo'; return r; })
+                    : Promise.reject(new Error('ruta V2: solo por router'));
+    return primera.catch(function(e1){
+      S.errA = (e1.message || String(e1)).slice(0, 160);
+      return sendTx(A).then(function(r){ S.via = 'LootRouter+Permit2'; return r; })
+        .catch(function(e2){
+          throw new Error((LANG === 'es' ? 'Vía Uniswap: ' : 'Uniswap path: ') + S.errA
+            + (LANG === 'es' ? ' — Vía router: ' : ' — Router path: ') + (e2.message || e2));
+        });
+    });
   }).then(function(res){
     showBox('sw-msg','ok', (LANG==='es'?'Swap enviado: ':'Swap sent: ') + fmtAmt(amt) + ' ' + ti.sym + ' → ' + to.sym
       + (S.via ? ' · ' + esc(S.via) : '') + (S.txMode ? ' · ' + esc(S.txMode) : ''));
